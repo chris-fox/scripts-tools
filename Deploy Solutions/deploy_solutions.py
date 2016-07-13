@@ -19,23 +19,15 @@ import os, traceback, gzip, json, io, uuid, re
 from arcgis.gis import *
 from arcgis.lyr import *
 
-try:
-    from urllib.request import urlopen as urlopen
-    from urllib.request import Request as request
-    from urllib.parse import urlencode as encode
-    import configparser as configparser
-    from io import StringIO
-# py2
-except ImportError:
-    from urllib2 import urlopen as urlopen
-    from urllib2 import Request as request
-    from urllib import urlencode as encode
-    import ConfigParser as configparser
-    from cStringIO import StringIO
+from urllib.request import urlopen as urlopen
+from urllib.request import Request as request
+from urllib.parse import urlencode as encode
+import configparser as configparser
+from io import StringIO
 
 SOLUITIONS_CONFIG_ID = '6d0361ea1b744019a87f3b921afe3006'
-ITEM_UPDATE_PROPERTIES = ['title', 'type', 'description', 'snippet', 
-                          'spatialReference', 'tags', 'culture',
+ITEM_UPDATE_PROPERTIES = ['title', 'type', 'description', 
+                          'snippet', 'tags', 'culture',
                         'accessInformation', 'licenseInfo', 'typeKeywords']
 IS_RUN_FROM_PRO = False
 
@@ -82,47 +74,65 @@ def _url_request(url, request_parameters, referer, request_type='GET', repeat=0,
 
     return response_json
 
-def _create_group(target, original_group):
-    title = "{0} {1}".format(original_group['title'], str(uuid.uuid4()).replace('-',''))
+def _create_group(target, original_group, folder_id=None):
+    title = original_group['title']
     original_group['tags'].append("source-{0}".format(original_group['id']))
+    if folder_id is not None:
+        original_group['tags'].append("sourcefolder-{0}".format(folder_id))
     tags = ','.join(original_group['tags'])
+    
+    i = 1    
+    while True:
+        search_query = 'owner:{0} AND title:"{1}"'.format(target._username, title)
+        groups = target.groups.search(search_query, outside_org=False)
+        if len(groups) == 0:
+            break
+        i += 1
+        title = "{0} {1}".format(original_group['title'], i)
+
     new_group = target.groups.create(title, tags, original_group['description'], original_group['snippet'],
                                      original_group['access'], original_group.get_thumbnail_link(), original_group['isInvitationOnly'],
                                      original_group['sortField'], original_group['sortOrder'], original_group['isViewOnly'])
 
     return new_group
 
-def _create_service(target, original_feature_service, folder_id=None, sharing=None):
+def _create_service(target, original_feature_service, extent, folder_id=None, sharing=None):
     original_item = original_feature_service.item
     fs_url = original_feature_service.url
     request_parameters = {'f' : 'json'}
     fs_json = _url_request(fs_url, request_parameters, target._portal.con._referer)
 
-    new_name = "{0}_{1}".format(original_item.name, str(uuid.uuid4()).replace('-',''))
-    new_item = target.content.create_service(new_name, fs_json['serviceDescription'], 
-                                             fs_json['hasStaticData'], fs_json['maxRecordCount'], 
-                                             fs_json['supportedQueryFormats'], fs_json['capabilities'],
-                                             fs_json['description'], fs_json['copyrightText'],
-                                             fs_json['spatialReference']['wkid'], 'featureService', None, folder_id)    
+    create_parameters = {
+            "name" : "{0}_{1}".format(original_item.name, str(uuid.uuid4()).replace('-','')),
+            "serviceDescription" : fs_json['serviceDescription'],
+            "hasVersionedData" : fs_json['hasVersionedData'],
+            "supportsDisconnectedEditing" : fs_json['supportsDisconnectedEditing'],
+            "hasStaticData" : fs_json['hasStaticData'],
+            "maxRecordCount" : fs_json['maxRecordCount'],
+            "supportedQueryFormats" : fs_json['supportedQueryFormats'],
+            "capabilities" :fs_json['capabilities'],
+            "description" : fs_json['description'],
+            "copyrightText" : fs_json['copyrightText'],
+            "allowGeometryUpdates" : fs_json['allowGeometryUpdates'],
+            "units" : fs_json['units'],
+            "syncEnabled" : fs_json['syncEnabled'],
+            "supportsApplyEditsWithGlobalIds" : fs_json['supportsApplyEditsWithGlobalIds'],
+            "editorTrackingInfo" : fs_json['editorTrackingInfo'],
+            "xssPreventionInfo" : fs_json['xssPreventionInfo']
+        }
 
-    item_properties = {}
-    for property_name in ITEM_UPDATE_PROPERTIES:
-        item_properties[property_name] = original_item[property_name]
+    path = 'content/users/' + target._username
+    if folder_id is not None:
+        path += '/' + folder_id
+    path += '/createService'
+    url = target._portal.con.baseurl + path
+    request_parameters = {'f' : 'json', 'createParameters' : json.dumps(create_parameters), 
+                          'type' : 'featureService', 'token' : target._portal.con.token}
 
-    item_properties['tags'].append("source-{0}".format(original_item.id))
-    item_properties['tags'] = ','.join(item_properties['tags'])
-    item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
-    try:
-        item_properties['text'] = original_item.get_data() #Bug, throws exception if item contains no data
-    except:
-        pass
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        thumbnail = original_item.download_thumbnail(temp_dir)
-        # TODO updating the metadata changes the tags, need to investigate
-        #metadata = original_item.download_metadata(temp_dir)     
-        new_item.update(item_properties=item_properties)           
-              
+    resp =_url_request(url, request_parameters, target._portal.con._referer, 'POST')
+    new_item = target.content.get(resp['itemId'])        
+    
+    request_parameters = {'f' : 'json'}       
     layers_json = _url_request(fs_url + '/layers', request_parameters, target._portal.con._referer)
 
     # Need to remove relationships first and add them back individually 
@@ -154,12 +164,28 @@ def _create_service(target, original_feature_service, folder_id=None, sharing=No
         admin_url = '{0}/rest/admin/services{1}/{2}/addToDefinition'.format(new_fs_url[:index], new_fs_url[index + len(find_string):], id)
         _url_request(admin_url, request_parameters, target._portal.con._referer, 'POST')
 
+    item_properties = {}
+    for property_name in ITEM_UPDATE_PROPERTIES:
+        item_properties[property_name] = original_item[property_name]
+
+    item_properties['tags'].append("source-{0}".format(original_item.id))
+    item_properties['tags'] = ','.join(item_properties['tags'])
+    item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
+    item_properties['extent'] = extent
+    item_properties['text'] = original_item.get_data()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        thumbnail_file = original_item.download_thumbnail(temp_dir)
+        # TODO updating the metadata changes the tags, need to investigate
+        #metadata = original_item.download_metadata(temp_dir)     
+        new_item.update(item_properties=item_properties, thumbnail=thumbnail_file)   
+
     if sharing is not None:
         _update_sharing(new_item, sharing)
     
     return new_item
 
-def _create_webmap(target, original_item, service_mapping, folder_name=None, sharing=None):  
+def _create_webmap(target, original_item, service_mapping, extent, folder_name=None, sharing=None):  
     #TODO check on properties that should be written
     item_properties = {}
     for property_name in ITEM_UPDATE_PROPERTIES:
@@ -169,6 +195,7 @@ def _create_webmap(target, original_item, service_mapping, folder_name=None, sha
     item_properties['tags'].append("source-{0}".format(original_item.id))
     item_properties['tags'] = ','.join(item_properties['tags'])
     item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
+    item_properties['extent'] = extent
 
     webmap_json = original_item.get_data()
 
@@ -290,6 +317,13 @@ def _get_existing_item(target, source_id, folder_id, type):
             return item
     return None 
 
+def _get_existing_group(target, source_id, folder_id):
+    search_query = 'owner:{0} AND tags:"source-{1},sourcefolder-{2}"'.format(target._username, source_id, folder_id)
+    groups = target.groups.search(search_query, outside_org=False)
+    if len(groups) > 0:
+        return groups[0]
+    return None
+
 def _move_progressor():
     if IS_RUN_FROM_PRO: #only use arcpy if we are running within Pro 
         import arcpy
@@ -302,24 +336,23 @@ def _add_message(message):
     else:
         print(message)
 
-def _main(target, solution_group, solution_names, output_folder):
+def _main(target, solution, maps_apps, extent, output_folder):
     source = GIS()
     solutions_config_json = json.loads(source.content.get(SOLUITIONS_CONFIG_ID).get_data(False).decode('utf-8'))
     group_mapping = {}   
     service_mapping = []
     webmap_mapping = {}   
     
-    #TODO Using private methods to get/create folders
     output_folder_id = target._portal.get_folder_id(target._username, output_folder)
     if output_folder_id is None:
         output_folder_id = target._portal.create_folder(target._username, output_folder)['id']
 
-    for solution_name in solution_names:
-        if solution_name not in solutions_config_json[solution_group]:
+    for map_app_name in maps_apps:
+        if map_app_name not in solutions_config_json[solution]:
             continue
 
-        solution_items = solutions_config_json[solution_group][solution_name]
-        message = 'Deploying {0}'.format(solution_name)
+        solution_items = solutions_config_json[solution][map_app_name]
+        message = 'Deploying {0}'.format(map_app_name)
         _add_message(message) 
 
         if IS_RUN_FROM_PRO:
@@ -331,14 +364,20 @@ def _main(target, solution_group, solution_names, output_folder):
             groups = solution_items['groups']
             for group_name in groups:
                 original_group_id = groups[group_name]['id']
-                if original_group_id in group_mapping:
+                if original_group_id in group_mapping: #We have already found or created this item
+                    _move_progressor()
                     continue
                 
                 original_group = source.groups.get(original_group_id)
-                new_group = _create_group(target, original_group)
-                if new_group is not None:
+                new_group = _get_existing_group(target, original_group_id, output_folder_id)
+                if new_group is None:
+                    new_group = _create_group(target, original_group, output_folder_id)
+                    if new_group is None:
+                        continue
                     _add_message("Created group '{0}'".format(new_group['title']))
-                    group_mapping[original_group['id']] = new_group['id']
+                else:
+                    _add_message("Existing group '{0}' found".format(new_group['title']))
+                group_mapping[original_group['id']] = new_group['id']
                 _move_progressor()
 
         if 'services' in solution_items:
@@ -346,10 +385,13 @@ def _main(target, solution_group, solution_names, output_folder):
             for service_name in services:
                 original_item = source.content.get(services[service_name]['id']) 
                 if original_item.type != 'Feature Service':
+                    continue #TODO, throw error
+
+                if original_item.id in [service_map[0][0] for service_map in service_mapping]: #We have already found or created this item
+                    _move_progressor()
                     continue
 
-                original_feature_service = FeatureService(original_item)
-
+                original_feature_service = FeatureService(original_item)  
                 new_item = _get_existing_item(target, original_item.id, output_folder_id, 'Feature Service')
                 if new_item is None:
                     sharing = services[service_name]['sharing']
@@ -360,9 +402,9 @@ def _main(target, solution_group, solution_names, output_folder):
                                 sharing['groups'].append(group_mapping[group])
                             else:
                                 continue #TODO, need to handle this situation, error?
-                            
-                    new_item = _create_service(target, original_feature_service, output_folder_id, sharing)
-                    if new_item is None:
+                     
+                    new_item = _create_service(target, original_feature_service, extent, output_folder_id, sharing)
+                    if new_item is None: #TODO, throw error
                         continue
                     _add_message("Created service '{0}'".format(new_item['title']))   
                 else:
@@ -375,8 +417,12 @@ def _main(target, solution_group, solution_names, output_folder):
         if 'maps' in solution_items:
             maps = solution_items['maps']
             for map_name in maps:
-                original_item = source.content.get(maps[map_name]['id']) 
-                new_item = _get_existing_item(target, original_item.id, output_folder_id, 'Web Map')
+                original_item_id = maps[map_name]['id']
+                if original_item_id in webmap_mapping: #We have already found or created this item
+                    _move_progressor()
+                    continue
+          
+                new_item = _get_existing_item(target, original_item_id, output_folder_id, 'Web Map')
                 if new_item is None:
                     sharing = maps[map_name]['sharing']
                     if 'groups' in sharing:
@@ -387,13 +433,14 @@ def _main(target, solution_group, solution_names, output_folder):
                             else:
                                 continue #TODO, need to handle this situation, error?
                     
-                    new_item = _create_webmap(target, original_item, service_mapping, output_folder, sharing)
+                    original_item = source.content.get(original_item_id) 
+                    new_item = _create_webmap(target, original_item, service_mapping, extent, output_folder, sharing)
                     if new_item is None:
                         continue
                     _add_message("Created map '{0}'".format(new_item['title']))
                 else:
                     _add_message("Existing map '{0}' found in {1}".format(new_item['title'], output_folder))  
-                webmap_mapping[original_item.id] =  new_item.id
+                webmap_mapping[original_item_id] =  new_item.id
                 _move_progressor()
 
         if 'apps' in solution_items:
@@ -419,21 +466,42 @@ def _main(target, solution_group, solution_names, output_folder):
                     _add_message("Existing application '{0}' found in {1}".format(new_item['title'], output_folder)) 
                 _move_progressor()          
 
-        _add_message('Successfully added {0}'.format(solution_name))
+        _add_message('Successfully added {0}'.format(map_app_name))
         _add_message('------------------------')
 
-def run(poral_url, username, pw, solution_group, solution_names, output_folder):
+def run(poral_url, username, pw, solution, maps_apps, extent, output_folder):
     target = GIS(portal_url, pw)
     IS_RUN_FROM_PRO = False
-    _main(target, solution_group, solution_names, output_folder)
+    _main(target, solution, maps_apps, extent, output_folder)
 
 if __name__ == "__main__":
-    target = GIS('pro')
-    target._username = json.loads(arcpy.GetPortalDescription())['user']['username']
-    target._url = arcpy.GetActivePortalURL()
-    solution_group = arcpy.GetParameterAsText(0)
-    solution_names = arcpy.GetParameter(1)
-    output_folder = arcpy.GetParameterAsText(2)
     IS_RUN_FROM_PRO = True
+    import arcpy
+    target = GIS('pro')
+    portal_description = json.loads(arcpy.GetPortalDescription())
+    target._username = portal_description['user']['username']
+    target._url = arcpy.GetActivePortalURL()
+    solution = arcpy.GetParameterAsText(0)
+    maps_apps = arcpy.GetParameter(1)
+    extent = arcpy.GetParameter(2)
+    output_folder = arcpy.GetParameterAsText(3)
+    arcpy.SetParameterAsText(5, '')
+    arcpy.SetParameterAsText(6, '')
 
-    _main(target, solution_group, solution_names, output_folder)
+    if extent is None:
+        default_extent = portal_description['defaultExtent']
+        coordinates = [[default_extent['xmin'], default_extent['ymin']], 
+                [default_extent['xmax'], default_extent['ymin']], 
+                [default_extent['xmax'], default_extent['ymax']], 
+                [default_extent['xmin'], default_extent['ymax']], 
+                [default_extent['xmin'], default_extent['ymin']]]
+
+        polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), 
+                                arcpy.SpatialReference(default_extent['spatialReference']['wkid']))
+        extent = polygon.extent
+
+    extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
+    extent_text = '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
+                                                extent_wgs84.XMax, extent_wgs84.YMax)
+
+    _main(target, solution, maps_apps, extent_text, output_folder)
