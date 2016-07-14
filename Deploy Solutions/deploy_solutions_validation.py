@@ -84,11 +84,22 @@ class ToolValidator(object):
         validation is performed. This method is called whenever a parameter
         has been changed."""
         if not self.params[0].hasBeenValidated:
-            if self.params[5].value is None:
+            if self.params[4].value is None:
                 portal = GIS()
-                solutions_config_json = json.loads(portal.content.get('6d0361ea1b744019a87f3b921afe3006').get_data(False).decode('utf-8'))
-                self.params[0].filter.list = [solution_name for solution_name in solutions_config_json]
-                self.params[5].value = json.dumps(solutions_config_json)
+                portalId = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
+                search_query = 'accountid:{0} AND tags:"{1}"'.format(portalId, 'one.click.solution')
+                solutions = {}
+                items = portal.content.search(search_query, max_items=100)
+                tag_prefix = 'solution.'
+                for item in items:
+                    solution_name = next((tag[len(tag_prefix):] for tag in item['tags'] if tag.startswith('solution.')), None)
+                    if solution_name is None:
+                        continue
+                    if solution_name not in solutions:
+                        solutions[solution_name] = []
+                    solutions[solution_name].append(item['title'])
+                self.params[0].filter.list = sorted([solution_name for solution_name in solutions])
+                self.params[4].value = json.dumps(solutions)
 
                 portal_description = json.loads(arcpy.GetPortalDescription())
                 username = portal_description['user']['username']
@@ -97,22 +108,14 @@ class ToolValidator(object):
                 url = "{0}/sharing/rest/content/users/{1}".format(arcpy.GetActivePortalURL(), username)
                 resp = _url_request(url, request_parameters, token['referer'])
                 self.params[3].filter.list = [folder['title'] for folder in resp['folders']]
-                self.params[6].value = json.dumps(resp['folders'])
                 return
 
-            solutions_config_json = json.loads(self.params[5].valueAsText)        
+            solutions = json.loads(self.params[4].valueAsText)        
             solution_name = self.params[0].valueAsText
-            self.params[1].filter.list = [name for name in solutions_config_json[solution_name]]
+            self.params[1].filter.list = sorted([map_app for map_app in solutions[solution_name]])
             self.params[1].value = arcpy.ValueTable() # reset parameter value
-
-        if not self.params[4].hasBeenValidated:
-            if self.params[4].value:
-                self.params[3].filter.list = []
-            else:
-                folders = json.loads(self.params[6].valueAsText)
-                self.params[3].filter.list = [folder['title'] for folder in folders]
     
     def updateMessages(self):
         """Modify the messages created by internal validation for each tool
         parameter. This method is called after internal validation."""
-        return
+        self.params[3].clearMessage()
