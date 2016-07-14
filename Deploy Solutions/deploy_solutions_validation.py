@@ -118,4 +118,8 @@ class ToolValidator(object):
     def updateMessages(self):
         """Modify the messages created by internal validation for each tool
         parameter. This method is called after internal validation."""
+        #if arcpy.GetSigninToken() is None:
+        #    self.params[0].setErrorMessage("You must be signed into a Portal to execute this tool.")
+        #else:
+        #    self.params[0].clearMessage()
         self.params[3].clearMessage()

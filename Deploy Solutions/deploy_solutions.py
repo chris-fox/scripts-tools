@@ -610,47 +610,46 @@ def run(portal_url, username, pw, solution, maps_apps, extent, output_folder):
     _main(target, solution, maps_apps, extent, output_folder)
 
 if __name__ == "__main__":
-    #target = arcgis.gis.GIS('http://arcgis4localgov2.maps.arcgis.com/', 'chri4849_lg', 'testtest123')
-    #solution = 'Manage Mosquito Populations'
-    #maps_apps = ['Mosquito Population Surveillance']
-    #extent_text = '-90.58328189096426,31.50296142971541,-78.77868076951435,39.69480796097512'
-    #output_folder = 'Mosquito Control'
+    target = None
+    try:
+        # Specify that we are running within Pro
+        # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
+        IS_RUN_FROM_PRO = True
+        import arcpy
 
-    # Specify that we are running within Pro
-    # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
-    IS_RUN_FROM_PRO = True
-    import arcpy
+        # Setup the target portal using the active portal within Pro
+        target = arcgis.gis.GIS('pro')
+        portal_description = json.loads(arcpy.GetPortalDescription())
+        target._username = portal_description['user']['username']
+        target._url = arcpy.GetActivePortalURL()
+    except arcpy.ExecuteError:
+        arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
+
+    if target is not None:
+        # Get the input parameters
+        solution = arcpy.GetParameterAsText(0)
+        maps_apps = sorted(list(set(arcpy.GetParameter(1)))) 
+        extent = arcpy.GetParameter(2)
+        output_folder = arcpy.GetParameterAsText(3)
+        arcpy.SetParameterAsText(4, '')
+
+        # Get the default extent of new maps defined in the portal
+        if extent is None:
+            default_extent = portal_description['defaultExtent']
+            coordinates = [[default_extent['xmin'], default_extent['ymin']], 
+                    [default_extent['xmax'], default_extent['ymin']], 
+                    [default_extent['xmax'], default_extent['ymax']], 
+                    [default_extent['xmin'], default_extent['ymax']], 
+                    [default_extent['xmin'], default_extent['ymin']]]
+
+            polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), 
+                                    arcpy.SpatialReference(default_extent['spatialReference']['wkid']))
+            extent = polygon.extent
+
+        # Project the extent to WGS84 which is used by default for the web map and services initial extents
+        extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
+        extent_text = '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
+                                                    extent_wgs84.XMax, extent_wgs84.YMax)
     
-    # Setup the target portal using the active portal within Pro
-    target = arcgis.gis.GIS('pro')
-    portal_description = json.loads(arcpy.GetPortalDescription())
-    target._username = portal_description['user']['username']
-    target._url = arcpy.GetActivePortalURL()
-    
-    # Get the input parameters
-    solution = arcpy.GetParameterAsText(0)
-    maps_apps = sorted(list(set(arcpy.GetParameter(1)))) 
-    extent = arcpy.GetParameter(2)
-    output_folder = arcpy.GetParameterAsText(3)
-    arcpy.SetParameterAsText(4, '')
-
-    # Get the default extent of new maps defined in the portal
-    if extent is None:
-        default_extent = portal_description['defaultExtent']
-        coordinates = [[default_extent['xmin'], default_extent['ymin']], 
-                [default_extent['xmax'], default_extent['ymin']], 
-                [default_extent['xmax'], default_extent['ymax']], 
-                [default_extent['xmin'], default_extent['ymax']], 
-                [default_extent['xmin'], default_extent['ymin']]]
-
-        polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), 
-                                arcpy.SpatialReference(default_extent['spatialReference']['wkid']))
-        extent = polygon.extent
-
-    # Project the extent to WGS84 which is used by default for the web map and services initial extents
-    extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
-    extent_text = '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
-                                                extent_wgs84.XMax, extent_wgs84.YMax)
-    
-    # Clone the solutions
-    _main(target, solution, maps_apps, extent_text, output_folder)
+        # Clone the solutions
+        _main(target, solution, maps_apps, extent_text, output_folder)
