@@ -15,10 +15,7 @@
  | limitations under the License.
  ------------------------------------------------------------------------------
  """
-import os, traceback, gzip, json, io, uuid, re
-from arcgis.gis import *
-from arcgis.lyr import *
-
+import arcgis, os, traceback, gzip, json, io, uuid, re, tempfile
 from urllib.request import urlopen as urlopen
 from urllib.request import Request as request
 from urllib.parse import urlencode as encode
@@ -149,7 +146,7 @@ def _create_service(target, original_feature_service, extent, folder_id=None, sh
             lyr['relationships'] = []
 
     definition = json.dumps(layers_json, sort_keys=True) # Layers needs to come before Tables or it effects the output service
-    new_feature_service = FeatureService(new_item)
+    new_feature_service = arcgis.lyr.FeatureService(new_item)
     new_fs_url = new_feature_service.url
 
     find_string = "/rest/services"
@@ -337,7 +334,7 @@ def _add_message(message):
         print(message)
 
 def _main(target, solution, maps_apps, extent, output_folder):
-    source = GIS()
+    source = arcgis.gis.GIS()
     solutions_config_json = json.loads(source.content.get(SOLUITIONS_CONFIG_ID).get_data(False).decode('utf-8'))
     group_mapping = {}   
     service_mapping = []
@@ -391,7 +388,7 @@ def _main(target, solution, maps_apps, extent, output_folder):
                     _move_progressor()
                     continue
 
-                original_feature_service = FeatureService(original_item)  
+                original_feature_service = arcgis.lyr.FeatureService(original_item)  
                 new_item = _get_existing_item(target, original_item.id, output_folder_id, 'Feature Service')
                 if new_item is None:
                     sharing = services[service_name]['sharing']
@@ -409,7 +406,7 @@ def _main(target, solution, maps_apps, extent, output_folder):
                     _add_message("Created service '{0}'".format(new_item['title']))   
                 else:
                     _add_message("Existing service '{0}' found in {1}".format(new_item['title'], output_folder))          
-                new_feature_service = FeatureService(new_item)
+                new_feature_service = arcgis.lyr.FeatureService(new_item)
                 service_mapping.append([(original_item.id, original_feature_service.url),
                                             (new_item.id, new_feature_service.url)])
                 _move_progressor()
@@ -470,19 +467,25 @@ def _main(target, solution, maps_apps, extent, output_folder):
         _add_message('------------------------')
 
 def run(poral_url, username, pw, solution, maps_apps, extent, output_folder):
-    target = GIS(portal_url, pw)
+    target = arcgis.gis.GIS(portal_url, pw)
     IS_RUN_FROM_PRO = False
     _main(target, solution, maps_apps, extent, output_folder)
 
 if __name__ == "__main__":
+    #target = GIS('http://arcgis4localgov2.maps.arcgis.com/', 'chri4849_lg', 'testtest123')
+    #solution = 'Manage Mosquito Populations'
+    #maps_apps = ['Mosquito Service Request']
+    #extent_text = '-90.58328189096426,31.50296142971541,-78.77868076951435,39.69480796097512'
+    #output_folder = 'Mosquito Control 3'
+
     IS_RUN_FROM_PRO = True
     import arcpy
-    target = GIS('pro')
+    target = arcgis.gis.GIS('pro')
     portal_description = json.loads(arcpy.GetPortalDescription())
     target._username = portal_description['user']['username']
     target._url = arcpy.GetActivePortalURL()
     solution = arcpy.GetParameterAsText(0)
-    maps_apps = arcpy.GetParameter(1)
+    maps_apps = set(arcpy.GetParameter(1)) 
     extent = arcpy.GetParameter(2)
     output_folder = arcpy.GetParameterAsText(3)
     arcpy.SetParameterAsText(5, '')
@@ -503,5 +506,5 @@ if __name__ == "__main__":
     extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
     extent_text = '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
                                                 extent_wgs84.XMax, extent_wgs84.YMax)
-
+    
     _main(target, solution, maps_apps, extent_text, output_folder)
