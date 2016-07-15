@@ -27,6 +27,7 @@ ITEM_UPDATE_PROPERTIES = ['title', 'type', 'description',
                         'accessInformation', 'licenseInfo', 'typeKeywords']
 IS_RUN_FROM_PRO = False
 
+
 def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.
     Keyword arguments:
@@ -120,40 +121,23 @@ def _clone_service(target, original_feature_service, extent, folder_id=None):
         request_parameters = {'f' : 'json'}
         fs_json = _url_request(fs_url, request_parameters, target._portal.con._referer)
 
-        # Create a new service using the definition of the original service
-        create_parameters = {
-                "name" : "{0}_{1}".format(original_item.name, str(uuid.uuid4()).replace('-','')),
-                "serviceDescription" : fs_json['serviceDescription'],
-                "hasVersionedData" : fs_json['hasVersionedData'],
-                "supportsDisconnectedEditing" : fs_json['supportsDisconnectedEditing'],
-                "hasStaticData" : fs_json['hasStaticData'],
-                "maxRecordCount" : fs_json['maxRecordCount'],
-                "supportedQueryFormats" : fs_json['supportedQueryFormats'],
-                "capabilities" :fs_json['capabilities'],
-                "description" : fs_json['description'],
-                "copyrightText" : fs_json['copyrightText'],
-                "allowGeometryUpdates" : fs_json['allowGeometryUpdates'],
-                "units" : fs_json['units'],
-                "syncEnabled" : fs_json['syncEnabled'],
-                "supportsApplyEditsWithGlobalIds" : fs_json['supportsApplyEditsWithGlobalIds'],
-                "editorTrackingInfo" : fs_json['editorTrackingInfo'],
-                "xssPreventionInfo" : fs_json['xssPreventionInfo']
-            }
-
-        path = 'content/users/' + target._username
+        # Create a new service from the definition of the original feature service
+        for key in ['layers', 'tables']:
+            del fs_json[key]     
+        fs_json['name'] = "{0}_{1}".format(original_item.name, str(uuid.uuid4()).replace('-',''))
+        url = "{0}content/users/{1}/".format(target._portal.con.baseurl, target._username)
         if folder_id is not None:
-            path += '/' + folder_id
-        path += '/createService'
-        url = target._portal.con.baseurl + path
-        request_parameters = {'f' : 'json', 'createParameters' : json.dumps(create_parameters), 
+            url += "{0}/".format(folder_id)
+        url += 'createService'
+        request_parameters = {'f' : 'json', 'createParameters' : json.dumps(fs_json), 
                               'type' : 'featureService', 'token' : target._portal.con.token}
-
         resp =_url_request(url, request_parameters, target._portal.con._referer, 'POST')
         new_item = target.content.get(resp['itemId'])        
     
         # Get the layer and table definitions from the original service
         request_parameters = {'f' : 'json'}       
         layers_json = _url_request(fs_url + '/layers', request_parameters, target._portal.con._referer)
+        layers = original_feature_service.layers
 
         # Need to remove relationships first and add them back individually 
         # after all layers and tables have been added to the definition
@@ -494,7 +478,7 @@ def _main(target, solution, maps_apps, extent, output_folder):
     # If the folder does not already exist create a new folder
     output_folder_id = target._portal.get_folder_id(target._username, output_folder)
     if output_folder_id is None:
-        output_folder_id = target._portal.create_folder(target._username, output_folder)['id']
+        output_folder_id = target.create_folder(target._username, output_folder)['id']
 
     for map_app_name in maps_apps:
         try:
