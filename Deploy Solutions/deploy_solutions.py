@@ -494,7 +494,7 @@ def _main(target, solution, maps_apps, extent, output_folder):
     # If the folder does not already exist create a new folder
     output_folder_id = target._portal.get_folder_id(target._username, output_folder)
     if output_folder_id is None:
-        output_folder_id = target._portal.create_folder(target._username, output_folder).id
+        output_folder_id = target._portal.create_folder(target._username, output_folder)['id']
 
     for map_app_name in maps_apps:
         try:
