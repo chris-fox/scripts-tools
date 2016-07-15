@@ -1,20 +1,27 @@
-import arcpy, os, traceback, gzip, json, io
-
-try:
-    from urllib.request import urlopen as urlopen
-    from urllib.request import Request as request
-    from urllib.parse import urlencode as encode
-    from urllib.parse import urlparse as parse
-    import configparser as configparser
-    from io import StringIO
-# py2
-except ImportError:
-    from urllib2 import urlopen as urlopen
-    from urllib2 import Request as request
-    from urllib import urlencode as encode
-    from urlparse import urlparse as parse
-    import ConfigParser as configparser
-    from cStringIO import StringIO
+"""
+-------------------------------------------------------------------------------
+ | Copyright 2016 Esri
+ |
+ | Licensed under the Apache License, Version 2.0 (the "License");
+ | you may not use this file except in compliance with the License.
+ | You may obtain a copy of the License at
+ |
+ |    http://www.apache.org/licenses/LICENSE-2.0
+ |
+ | Unless required by applicable law or agreed to in writing, software
+ | distributed under the License is distributed on an "AS IS" BASIS,
+ | WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ | See the License for the specific language governing permissions and
+ | limitations under the License.
+ ------------------------------------------------------------------------------
+ """
+import os, traceback, gzip, json, io, arcpy
+from urllib.request import urlopen as urlopen
+from urllib.request import Request as request
+from urllib.parse import urlencode as encode
+from urllib.parse import urlparse as parse
+import configparser as configparser
+from io import StringIO
 
 class ToolValidator(object):
     """Class for validating a tool's parameter values and controlling
@@ -37,12 +44,12 @@ class ToolValidator(object):
         validation is performed. This method is called whenever a parameter
         has been changed."""
         if not self.params[0].hasBeenValidated:
-            url = _validate_layer_url(self.params[0])
+            url = _validate_url(self.params[0])
             if url is not None:
                 try:
-                    token = arcpy.GetSigninToken()['token']
-                    request_parameters = {'f' : 'json', 'token' : token}
-                    self.params[7].value = json.dumps(_url_request(url, request_parameters)['fields'])
+                    token = arcpy.GetSigninToken()
+                    request_parameters = {'f' : 'json', 'token' : token['token'] }
+                    self.params[7].value = json.dumps(_url_request(url, request_parameters, token['referer'])['fields'])
                 except:
                     self.params[7].value = "Failed to connect"
             else:
@@ -121,32 +128,36 @@ class ToolValidator(object):
         """Modify the messages created by internal validation for each tool
         parameter. This method is called after internal validation."""
         if self.params[7].valueAsText == "Invalid url":
-            self.params[0].setErrorMessage("Input layer is not a feature service")
+            self.params[0].setErrorMessage("Input layer or table is not a feature service")
         elif self.params[7].valueAsText == "Failed to connect":
             self.params[0].setErrorMessage("Unable to connect to feature service. Ensure the feature service belongs to the active portal and that you are signed in as the owner.")
         else:
             self.params[0].clearMessage()
         return
-    
-def _validate_layer_url(parameter):
-    try:
-        layer = parameter.value
-        if arcpy.GetInstallInfo()['ProductName'] == 'Desktop':
-            return layer.dataSource
-        elif arcpy.GetInstallInfo()['ProductName'] == 'ArcGISPro':
-            connection_props = layer.connectionProperties
-            if connection_props['workspace_factory'] != 'FeatureService':
-                return None
-            return '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
-    except AttributeError:
-        url = layer = parameter.valueAsText
-        pieces = parse(url)
-        if pieces.scheme in ['http', 'https']:
-            return url
-        else:
+
+def _validate_url(parameter):
+    input = parameter.value
+    if type(input) == arcpy._mp.Layer: # Layer in the map
+        connection_props = input.connectionProperties
+        if connection_props['workspace_factory'] != 'FeatureService':
+            return None
+        return '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
+    else:
+        input = parameter.valueAsText 
+        pieces = parse(input)
+        if pieces.scheme in ['http', 'https']: # URL
+            return input
+        else: # Table in the map
+            prj = arcpy.mp.ArcGISProject('Current')
+            for map in prj.listMaps():
+                for table in map.listTables():
+                    if table.name == input:
+                        connection_props = table.connectionProperties
+                        if connection_props['workspace_factory'] == 'FeatureService':
+                            return '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
             return None
 
-def _url_request(url, request_parameters, request_type='GET', repeat=0, error_text="Error", raise_on_failure=True):
+def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.
     Keyword arguments:
     url - the url of the request
@@ -162,6 +173,8 @@ def _url_request(url, request_parameters, request_type='GET', repeat=0, error_te
         req = request(url, encode(request_parameters).encode('UTF-8'), headers)
 
     req.add_header('Accept-encoding', 'gzip')
+    if referer is not None:
+        req.add_header('Referer', referer)
 
     response = urlopen(req)
 
@@ -178,12 +191,12 @@ def _url_request(url, request_parameters, request_type='GET', repeat=0, error_te
     if "error" in response_json:
         if repeat == 0:
             if raise_on_failure:
-                raise Exception("{0}: {1}".format(error_text, response_json))
+                raise Exception(response_json)
             return response_json
 
         repeat -= 1
         time.sleep(2)
         response_json = self._url_request(
-            url, request_parameters, request_type, repeat, error_text, raise_on_failure)
+            url, request_parameters, referer, request_type, repeat, raise_on_failure)
 
     return response_json
