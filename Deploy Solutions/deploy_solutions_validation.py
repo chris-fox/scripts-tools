@@ -23,7 +23,7 @@ from urllib.parse import urlencode as encode
 import configparser as configparser
 from io import StringIO
 
-def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, error_text="Error", raise_on_failure=True):
+def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.
     Keyword arguments:
     url - the url of the request
@@ -39,7 +39,8 @@ def _url_request(url, request_parameters, referer, request_type='GET', repeat=0,
         req = request(url, encode(request_parameters).encode('UTF-8'), headers)
 
     req.add_header('Accept-encoding', 'gzip')
-    req.add_header('Referer', referer)
+    if referer is not None:
+        req.add_header('Referer', referer)
 
     response = urlopen(req)
 
@@ -56,13 +57,13 @@ def _url_request(url, request_parameters, referer, request_type='GET', repeat=0,
     if "error" in response_json:
         if repeat == 0:
             if raise_on_failure:
-                raise Exception("{0}: {1}".format(error_text, response_json))
+                raise Exception(response_json)
             return response_json
 
         repeat -= 1
         time.sleep(2)
         response_json = self._url_request(
-            url, request_parameters, referer, request_type, repeat, error_text, raise_on_failure)
+            url, request_parameters, referer, request_type, repeat, raise_on_failure)
 
     return response_json
 
@@ -85,11 +86,19 @@ class ToolValidator(object):
         has been changed."""
         if not self.params[0].hasBeenValidated:
             if self.params[4].value is None:
-                portal = GIS()
                 portalId = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
                 search_query = 'accountid:{0} AND tags:"{1}"'.format(portalId, 'one.click.solution')
+                request_parameters = {'f' : 'json', 'q' : search_query, 'start' : 1, 'num' : 100}
+                url = 'http://www.arcgis.com/sharing/rest/search'
+                items = []
+                while True:
+                    resp = _url_request(url, request_parameters, None)
+                    items += (resp['results'])
+                    if len(resp['results']) < 100:
+                        break
+                    request_parameters['start'] += 100
+                
                 solutions = {}
-                items = portal.content.search(search_query, max_items=100)
                 tag_prefix = 'solution.'
                 for item in items:
                     solution_name = next((tag[len(tag_prefix):] for tag in item['tags'] if tag.startswith('solution.')), None)
@@ -118,8 +127,4 @@ class ToolValidator(object):
     def updateMessages(self):
         """Modify the messages created by internal validation for each tool
         parameter. This method is called after internal validation."""
-        #if arcpy.GetSigninToken() is None:
-        #    self.params[0].setErrorMessage("You must be signed into a Portal to execute this tool.")
-        #else:
-        #    self.params[0].clearMessage()
         self.params[3].clearMessage()
