@@ -136,7 +136,7 @@ def _clone_service(connection, original_feature_service, extent, folder=None):
             url += "{0}/".format(folder['id'])
         url += 'createService'
         request_parameters = {'f' : 'json', 'createParameters' : json.dumps(fs_json), 
-                              'type' : 'featureService', 'token' : connection['token']}
+                              'outputType' : 'featureService', 'token' : connection['token']}
         resp =_url_request(url, request_parameters, connection['referer'], 'POST')
         new_item = target.content.get(resp['itemId'])        
     
