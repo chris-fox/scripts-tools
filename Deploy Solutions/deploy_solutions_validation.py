@@ -16,7 +16,7 @@
  ------------------------------------------------------------------------------
  """
 import os, traceback, gzip, json, io, arcpy
-from arcgis.gis import *
+from arcgis import gis
 from urllib.request import urlopen as urlopen
 from urllib.request import Request as request
 from urllib.parse import urlencode as encode
@@ -86,27 +86,19 @@ class ToolValidator(object):
         has been changed."""
         if not self.params[0].hasBeenValidated:
             if self.params[4].value is None:
+                source = gis.GIS()
                 portalId = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
-                search_query = 'accountid:{0} AND tags:"{1}"'.format(portalId, 'one.click.solution')
-                request_parameters = {'f' : 'json', 'q' : search_query, 'start' : 1, 'num' : 100}
-                url = 'http://www.arcgis.com/sharing/rest/search'
-                items = []
-                while True:
-                    resp = _url_request(url, request_parameters, None)
-                    items += (resp['results'])
-                    if len(resp['results']) < 100:
-                        break
-                    request_parameters['start'] += 100
-                
+                search_query = 'accountid:{0} AND tags:"{1}"'.format(portalId, 'one.click.solution')               
+                items = source.content.search(search_query, max_items=1000)
                 solutions = {}
                 tag_prefix = 'solution.'
                 for item in items:
-                    solution_name = next((tag[len(tag_prefix):] for tag in item['tags'] if tag.startswith('solution.')), None)
+                    solution_name = next((tag[len(tag_prefix):] for tag in item.tags if tag.startswith('solution.')), None)
                     if solution_name is None:
                         continue
                     if solution_name not in solutions:
                         solutions[solution_name] = []
-                    solutions[solution_name].append(item['title'])
+                    solutions[solution_name].append(item.title)
                 self.params[0].filter.list = sorted([solution_name for solution_name in solutions])
                 self.params[4].value = json.dumps(solutions)
 
