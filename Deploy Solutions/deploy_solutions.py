@@ -195,7 +195,6 @@ def _clone_service(connection, original_feature_service, extent, folder=None):
     
         return new_item
     except Exception as e:
-        raise
         raise Exception("Failed to create service '{0}': {1}".format(original_feature_service.item.title, str(e)), new_item)
 
 def _clone_webmap(connection, original_item, original_item_data, service_mapping, extent, folder=None, group=None):  
@@ -611,7 +610,6 @@ def _main(connection, solution, maps_apps, extent, output_folder):
             _add_message('Successfully added {0}'.format(map_app_name))
             _add_message('------------------------')
         except Exception as e:
-            raise
             _add_message(e.args[0], 'Error')
             if len(e.args) > 1:
                 if e.args[1] is not None and type(e.args[1]) in [gis.Item, gis.Group]:
