@@ -28,6 +28,8 @@ ITEM_UPDATE_PROPERTIES = ['title', 'type', 'description',
                         'accessInformation', 'licenseInfo', 'typeKeywords']
 IS_RUN_FROM_PRO = False
 
+class ItemCreateException(Exception):
+    pass
 
 def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.
@@ -81,8 +83,9 @@ def _clone_group(connection, original_group, folder=None):
     folder - The folder containing items for the solution to associate with the new group"""
     
     try:
-        target = connection['target']
         new_group = None
+        target = connection['target']
+        
         title = original_group.title
         original_group.tags.append("source-{0}".format(original_group.id))
         if folder is not None:
@@ -107,7 +110,7 @@ def _clone_group(connection, original_group, folder=None):
 
         return new_group
     except Exception as e:
-        raise Exception("Failed to create group '{0}': {1}".format(original_group.title, str(e)))
+        raise ItemCreateException("Failed to create group '{0}': {1}".format(original_group.title, str(e)), new_group)
 
 def _clone_service(connection, original_feature_service, extent, folder=None):
     """Clone a new service in the target portal from the definition of an existing service.
@@ -195,7 +198,7 @@ def _clone_service(connection, original_feature_service, extent, folder=None):
     
         return new_item
     except Exception as e:
-        raise Exception("Failed to create service '{0}': {1}".format(original_feature_service.item.title, str(e)), new_item)
+        raise ItemCreateException("Failed to create service '{0}': {1}".format(original_feature_service.item.title, str(e)), new_item)
 
 def _clone_webmap(connection, original_item, original_item_data, service_mapping, extent, folder=None, group=None):  
     """Clone a new service in the target portal from the definition of an existing service.
@@ -255,7 +258,7 @@ def _clone_webmap(connection, original_item, original_item_data, service_mapping
 
         return new_item
     except Exception as e:
-        raise Exception("Failed to create web map '{0}': {1}".format(original_item.title, str(e)), new_item)
+        raise ItemCreateException("Failed to create web map '{0}': {1}".format(original_item.title, str(e)), new_item)
 
 def _clone_app(connection, original_item, original_item_data, service_mapping, webmap_mapping, group_mapping, folder=None, group=None):
     """Clone a new application in the target portal from the definition of an existing application.
@@ -343,7 +346,7 @@ def _clone_app(connection, original_item, original_item_data, service_mapping, w
 
         return new_item
     except Exception as e:
-        raise Exception("Failed to create application '{0}': {1}".format(original_item.title, str(e)), new_item)
+        raise ItemCreateException("Failed to create application '{0}': {1}".format(original_item.title, str(e)), new_item)
 
 def _get_original_solution_items(source, item, solution_items, group=None):
     """Get the children item and item data of a given item. This is used to recursively find all the items that make up a given map or app.
@@ -610,10 +613,12 @@ def _main(connection, solution, maps_apps, extent, output_folder):
             _add_message('Successfully added {0}'.format(map_app_name))
             _add_message('------------------------')
         except Exception as e:
-            _add_message(e.args[0], 'Error')
-            if len(e.args) > 1:
-                if e.args[1] is not None and type(e.args[1]) in [gis.Item, gis.Group]:
+            if type(e) == ItemCreateException:
+                _add_message(e.args[0], 'Error')
+                if e.args[1] is not None:
                     created_items.append(e.args[1])
+            else:
+                _add_message(str(e), 'Error')
 
             for item in created_items:
                 if item.delete():
@@ -655,7 +660,7 @@ if __name__ == "__main__":
         connection = {'target' : target, 'url' : arcpy.GetActivePortalURL(), 
                       'username' : portal_description['user']['username'], 
                       'token' : token['token'], 'referer' : token['referer'] }
-    except arcpy.ExecuteError:
+    except Except:
         arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
 
     if connection is not None:
