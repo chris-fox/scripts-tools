@@ -104,7 +104,6 @@ def main():
         request_parameters = {'f' : 'json', 'token' : token['token'], 'async' : False}
         update_defintion = {'fields' : [{'name' : field.name, 'domain' : domain}]}
         request_parameters['updateDefinition'] = json.dumps(update_defintion)
-        arcpy.AddMessage(request_parameters['updateDefinition'])
         resp = _url_request(admin_url + "/updateDefinition", request_parameters, token['referer'], request_type='POST')
     except Exception as e:
         arcpy.AddError("Failed to update domain: {0}".format(str(e)))
