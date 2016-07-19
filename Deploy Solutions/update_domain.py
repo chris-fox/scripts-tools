@@ -28,67 +28,99 @@ def main():
     type = arcpy.GetParameterAsText(2)
     name = arcpy.GetParameterAsText(3)
     coded_values = arcpy.GetParameter(4)
-    min = arcpy.GetParameter(5)
-    max = arcpy.GetParameter(6)
+    min = arcpy.GetParameterAsText(5)
+    max = arcpy.GetParameterAsText(6)
     domain = None
 
+    has_error = False
     if type == 'Coded Value':
-        domain = {'type' : 'codedValue', 'name' : name, 'codedValues' : []}
-        for i in range(0, coded_values.rowCount):
-            code = coded_values.getValue(i, 0)
-            error_found = False
-            if field.type == 'SmallInteger' or field.type == 'Integer':
-                try:
-                    code = int(code)
-                except ValueError:
-                    arcpy.AddError("{0} is invalid code for an integer field".format(code))
-                    error_found = True
-            elif field.type == 'Single' or field.type == 'Double':
-                try:
-                    code = float(code)
-                except ValueError:
-                    arcpy.AddError("{0} is invalid code for an floating point field".format(code))
-                    error_found = True
-            domain['codedValues'].append({'code' : code, 'name' : coded_values.getValue(i, 1)})
-        if error_found:
-            return
-    elif type == 'Range':
-        domain = {'type': 'range', 'name' : name, 'range' : [min, max]}
+        if coded_values.rowCount > 0:
+            domain = {'type' : 'codedValue', 'name' : name, 'codedValues' : []}
+            for i in range(0, coded_values.rowCount):
+                code = coded_values.getValue(i, 0)
+                value = coded_values.getValue(i, 1)
+            
+                if code == '' or value == '':
+                   arcpy.AddError("Code and Value cannot be null")
+                   has_error = True
+                elif field.type == 'SmallInteger' or field.type == 'Integer':
+                    try:
+                        code = int(code)
+                    except ValueError:
+                        arcpy.AddError("{0} is an invalid code for an integer field".format(code))
+                        has_error = True
+                elif field.type == 'Single' or field.type == 'Double':
+                    try:
+                        code = float(code)
+                    except ValueError:
+                        arcpy.AddError("{0} is an invalid code for an floating point field".format(code))
+                        has_error = True
 
+                domain['codedValues'].append({'code' : code, 'name' : value})
+        
+        if has_error:
+            return
+    
+    elif type == 'Range':
+        range_values = []
+        if min == '' or max == '':
+            arcpy.AddError("Min and Max cannot be null")
+            has_error = True
+        elif min == max:
+            arcpy.AddError("Min and Max cannot be equal")
+            has_error = True
+        else:
+            for val in [min, max]:
+                if field.type == 'SmallInteger' or field.type == 'Integer':
+                    try:
+                        val = int(val)
+                    except ValueError:
+                        arcpy.AddError("{0} is an invalid range value for an integer field".format(val))
+                        has_error = True
+                if field.type == 'Single' or field.type == 'Double':
+                    try:
+                        val = float(val)
+                    except ValueError:
+                        arcpy.AddError("{0} is an invalid range value for an floating point field".format(val))
+                        has_error = True
+                range_values.append(val)
+
+        if has_error:
+            return
+
+        if range_values[0] > range_values[1]:
+            range_values.insert(0, range_values[1])
+            range_values.pop()
+        
+        domain = {'type': 'range', 'name' : name, 'range' : range_values}
+    
     try:
-        admin_url = _get_admin_url(arcpy.GetParameterInfo()[0])
-        if admin_url is None:
-            raise Exception("Input layer or table is not a feature service")
+        admin_url = _get_url(arcpy.GetParameterInfo()[0])
+        if admin_url == "Invalid URL":
+            raise Exception("Input layer or table is not a hosted feature service")
+        elif admin_url == "Failed To Connect":
+            raise Exception("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
         token = arcpy.GetSigninToken()
         request_parameters = {'f' : 'json', 'token' : token['token'], 'async' : False}
         update_defintion = {'fields' : [{'name' : field.name, 'domain' : domain}]}
         request_parameters['updateDefinition'] = json.dumps(update_defintion)
-        _url_request(admin_url, request_parameters, token['referer'], request_type='POST')
+        arcpy.AddMessage(request_parameters['updateDefinition'])
+        resp = _url_request(admin_url + "/updateDefinition", request_parameters, token['referer'], request_type='POST')
     except Exception as e:
-        arcpy.AddError("Failed to update domain: {0}".format(e.args[0]))
-
-def _get_admin_url(parameter):
-    url = _get_url(parameter)
-    if url is None:
-        return None
-    find_string = "/rest/services"
-    index = url.find(find_string)
-    if index == -1:
-        return None
-    return '{0}/rest/admin/services{1}/updateDefinition'.format(url[:index], url[index + len(find_string):])
+        arcpy.AddError("Failed to update domain: {0}".format(str(e)))
 
 def _get_url(parameter):
+    url = None
     input = parameter.value
     if type(input) == arcpy._mp.Layer: # Layer in the map
         connection_props = input.connectionProperties
-        if connection_props['workspace_factory'] != 'FeatureService':
-            return None
-        return '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
+        if connection_props['workspace_factory'] == 'FeatureService':
+            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
     else:
         input = parameter.valueAsText 
         pieces = parse(input)
         if pieces.scheme in ['http', 'https']: # URL
-            return input
+            url = input
         else: # Table in the map
             prj = arcpy.mp.ArcGISProject('Current')
             for map in prj.listMaps():
@@ -96,8 +128,19 @@ def _get_url(parameter):
                     if table.name == input:
                         connection_props = table.connectionProperties
                         if connection_props['workspace_factory'] == 'FeatureService':
-                            return '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
-            return None
+                            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
+    if url is None:
+        return "Invalid URL"
+
+    try:      
+        find_string = "/rest/services"
+        index = url.find(find_string)
+        if index == -1:
+            return "Invalid URL"
+        
+        return '{0}/rest/admin/services{1}'.format(url[:index], url[index + len(find_string):])
+    except:
+        return "Failed To Connect"
 
 def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.

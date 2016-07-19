@@ -44,16 +44,7 @@ class ToolValidator(object):
         validation is performed. This method is called whenever a parameter
         has been changed."""
         if not self.params[0].hasBeenValidated:
-            url = _validate_url(self.params[0])
-            if url is not None:
-                try:
-                    token = arcpy.GetSigninToken()
-                    request_parameters = {'f' : 'json', 'token' : token['token'] }
-                    self.params[7].value = json.dumps(_url_request(url, request_parameters, token['referer'])['fields'])
-                except:
-                    self.params[7].value = "Failed to connect"
-            else:
-                self.params[7].value = "Invalid url"
+            self.params[7].value = _get_fields(self.params[0])
             self.params[1].value = None
             self.params[2].value = None
             self.params[3].enabled = False
@@ -127,26 +118,26 @@ class ToolValidator(object):
     def updateMessages(self):
         """Modify the messages created by internal validation for each tool
         parameter. This method is called after internal validation."""
-        if self.params[7].valueAsText == "Invalid url":
-            self.params[0].setErrorMessage("Input layer or table is not a feature service")
-        elif self.params[7].valueAsText == "Failed to connect":
-            self.params[0].setErrorMessage("Unable to connect to feature service. Ensure the feature service belongs to the active portal and that you are signed in as the owner.")
+        if self.params[7].valueAsText == "Invalid URL":
+            self.params[0].setErrorMessage("Input layer or table is not a hosted feature service")
+        elif self.params[7].valueAsText == "Failed To Connect":
+            self.params[0].setErrorMessage("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
         else:
             self.params[0].clearMessage()
         return
 
-def _validate_url(parameter):
+def _get_fields(parameter):
+    url = None
     input = parameter.value
     if type(input) == arcpy._mp.Layer: # Layer in the map
         connection_props = input.connectionProperties
-        if connection_props['workspace_factory'] != 'FeatureService':
-            return None
-        return '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
+        if connection_props['workspace_factory'] == 'FeatureService':
+            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
     else:
         input = parameter.valueAsText 
         pieces = parse(input)
         if pieces.scheme in ['http', 'https']: # URL
-            return input
+            url = input
         else: # Table in the map
             prj = arcpy.mp.ArcGISProject('Current')
             for map in prj.listMaps():
@@ -154,8 +145,27 @@ def _validate_url(parameter):
                     if table.name == input:
                         connection_props = table.connectionProperties
                         if connection_props['workspace_factory'] == 'FeatureService':
-                            return '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
-            return None
+                            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
+    if url is None:
+        return "Invalid URL"
+
+    try:      
+        find_string = "/rest/services"
+        index = url.find(find_string)
+        if index == -1:
+            return "Invalid URL"
+        
+        admin_url = '{0}/rest/admin/services{1}'.format(url[:index], url[index + len(find_string):])
+        token = arcpy.GetSigninToken()
+        request_parameters = {'f' : 'json', 'token' : token['token'] }
+        resp = _url_request(admin_url, request_parameters, token['referer'])
+        
+        if "serviceItemId" not in resp:
+            return "Failed To Connect"
+
+        return json.dumps(resp['fields'])
+    except:
+        return "Failed To Connect"
 
 def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.
