@@ -656,9 +656,8 @@ if __name__ == "__main__":
         # Setup the target portal using the active portal within Pro
         target = gis.GIS('pro')
         token = arcpy.GetSigninToken()
-        portal_description = json.loads(arcpy.GetPortalDescription())
         connection = {'target' : target, 'url' : arcpy.GetActivePortalURL(), 
-                      'username' : portal_description['user']['username'], 
+                      'username' : target.users.me.username, 
                       'token' : token['token'], 'referer' : token['referer'] }
     except Except:
         arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
@@ -673,6 +672,7 @@ if __name__ == "__main__":
 
         # Get the default extent of new maps defined in the portal
         if extent is None:
+            portal_description = json.loads(arcpy.GetPortalDescription())
             default_extent = portal_description['defaultExtent']
             coordinates = [[default_extent['xmin'], default_extent['ymin']], 
                     [default_extent['xmax'], default_extent['ymin']], 
