@@ -15,57 +15,9 @@
  | limitations under the License.
  ------------------------------------------------------------------------------
  """
-import os, traceback, gzip, json, io, arcpy
+import json, arcpy
+from scripts import _solution_helpers
 from arcgis import gis
-from urllib.request import urlopen as urlopen
-from urllib.request import Request as request
-from urllib.parse import urlencode as encode
-import configparser as configparser
-from io import StringIO
-
-def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
-    """Send a new request and format the json response.
-    Keyword arguments:
-    url - the url of the request
-    request_parameters - a dictionay containing the name of the parameter and its correspoinsding value
-    request_type - the type of request: 'GET', 'POST'
-    repeat - the nuber of times to repeat the request in the case of a failure
-    error_text - the message to log if an error is returned
-    raise_on_failure - indicates if an exception should be raised if an error is returned and repeat is 0"""
-    if request_type == 'GET':
-        req = request('?'.join((url, encode(request_parameters))))
-    else:
-        headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',}
-        req = request(url, encode(request_parameters).encode('UTF-8'), headers)
-
-    req.add_header('Accept-encoding', 'gzip')
-    if referer is not None:
-        req.add_header('Referer', referer)
-
-    response = urlopen(req)
-
-    if response.info().get('Content-Encoding') == 'gzip':
-        buf = io.BytesIO(response.read())
-        with gzip.GzipFile(fileobj=buf) as gzip_file:
-            response_bytes = gzip_file.read()
-    else:
-        response_bytes = response.read()
-
-    response_text = response_bytes.decode('UTF-8')
-    response_json = json.loads(response_text)
-
-    if "error" in response_json:
-        if repeat == 0:
-            if raise_on_failure:
-                raise Exception(response_json)
-            return response_json
-
-        repeat -= 1
-        time.sleep(2)
-        response_json = self._url_request(
-            url, request_parameters, referer, request_type, repeat, raise_on_failure)
-
-    return response_json
 
 class ToolValidator(object):
     """Class for validating a tool's parameter values and controlling
@@ -87,8 +39,7 @@ class ToolValidator(object):
         if not self.params[0].hasBeenValidated:
             if self.params[4].value is None:
                 source = gis.GIS()
-                portalId = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
-                search_query = 'accountid:{0} AND tags:"{1}"'.format(portalId, 'one.click.solution')               
+                search_query = 'accountid:{0} AND tags:"{1}"'.format(_solution_helpers.PORTAL_ID, 'one.click.solution')               
                 items = source.content.search(search_query, max_items=1000)
                 solutions = {}
                 tag_prefix = 'solution.'
@@ -107,7 +58,7 @@ class ToolValidator(object):
                 token = arcpy.GetSigninToken()
                 request_parameters = {'f' : 'json', 'token' : token['token'] }
                 url = "{0}/sharing/rest/content/users/{1}".format(arcpy.GetActivePortalURL(), username)
-                resp = _url_request(url, request_parameters, token['referer'])
+                resp = _solution_helpers.url_request(url, request_parameters, token['referer'])
                 self.params[3].filter.list = [folder['title'] for folder in resp['folders']]
                 return
 

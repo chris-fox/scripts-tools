@@ -15,13 +15,8 @@
  | limitations under the License.
  ------------------------------------------------------------------------------
  """
-import os, traceback, gzip, json, io, uuid, re, tempfile
+import json, uuid, re, tempfile, _solution_helpers
 from arcgis import gis, lyr
-from urllib.request import urlopen as urlopen
-from urllib.request import Request as request
-from urllib.parse import urlencode as encode
-import configparser as configparser
-from io import StringIO
 
 ITEM_UPDATE_PROPERTIES = ['title', 'type', 'description', 
                           'snippet', 'tags', 'culture',
@@ -30,50 +25,6 @@ IS_RUN_FROM_PRO = False
 
 class ItemCreateException(Exception):
     pass
-
-def _url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
-    """Send a new request and format the json response.
-    Keyword arguments:
-    url - URL of the request
-    request_parameters - Dictionary containing the name of the parameter and its correspoinsding value
-    referer - Referer for the request
-    request_type - Type of request: 'GET', 'POST'
-    repeat - Number of times to repeat the request in the case of a failure
-    error_text - Message to log if an error is returned
-    raise_on_failure - Indicates if an exception should be raised if an error is returned and repeat is 0"""
-    if request_type == 'GET':
-        req = request('?'.join((url, encode(request_parameters))))
-    else:
-        headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',}
-        req = request(url, encode(request_parameters).encode('UTF-8'), headers)
-
-    req.add_header('Accept-encoding', 'gzip')
-    req.add_header('Referer', referer)
-
-    response = urlopen(req)
-
-    if response.info().get('Content-Encoding') == 'gzip':
-        buf = io.BytesIO(response.read())
-        with gzip.GzipFile(fileobj=buf) as gzip_file:
-            response_bytes = gzip_file.read()
-    else:
-        response_bytes = response.read()
-
-    response_text = response_bytes.decode('UTF-8')
-    response_json = json.loads(response_text)
-
-    if "error" in response_json:
-        if repeat == 0:
-            if raise_on_failure:
-                raise Exception(response_json)
-            return response_json
-
-        repeat -= 1
-        time.sleep(2)
-        response_json = self._url_request(
-            url, request_parameters, referer, request_type, repeat, raise_on_failure)
-
-    return response_json
 
 def _clone_group(connection, original_group, folder=None):
     """Clone a new group from an existing group.
@@ -128,7 +79,7 @@ def _clone_service(connection, original_feature_service, extent, folder=None):
         original_item = original_feature_service.item
         fs_url = original_feature_service.url
         request_parameters = {'f' : 'json'}
-        fs_json = _url_request(fs_url, request_parameters, connection['referer'])
+        fs_json = _solution_helpers.url_request(fs_url, request_parameters, connection['referer'])
 
         # Create a new service from the definition of the original feature service
         for key in ['layers', 'tables']:
@@ -140,12 +91,12 @@ def _clone_service(connection, original_feature_service, extent, folder=None):
         url += 'createService'
         request_parameters = {'f' : 'json', 'createParameters' : json.dumps(fs_json), 
                               'outputType' : 'featureService', 'token' : connection['token']}
-        resp =_url_request(url, request_parameters, connection['referer'], 'POST')
+        resp =_solution_helpers.url_request(url, request_parameters, connection['referer'], 'POST')
         new_item = target.content.get(resp['itemId'])        
     
         # Get the layer and table definitions from the original service
         request_parameters = {'f' : 'json'}       
-        layers_json = _url_request(fs_url + '/layers', request_parameters, connection['referer'])
+        layers_json = _solution_helpers.url_request(fs_url + '/layers', request_parameters, connection['referer'])
 
         # Need to remove relationships first and add them back individually 
         # after all layers and tables have been added to the definition
@@ -170,14 +121,14 @@ def _clone_service(connection, original_feature_service, extent, folder=None):
         index = new_fs_url.find(find_string)
         admin_url = '{0}/rest/admin/services{1}/addToDefinition'.format(new_fs_url[:index], new_fs_url[index + len(find_string):])
         request_parameters = {'f' : 'json', 'addToDefinition' : definition, 'token' : connection['token']}
-        _url_request(admin_url, request_parameters, connection['referer'], 'POST')
+        _solution_helpers.url_request(admin_url, request_parameters, connection['referer'], 'POST')
 
         # Add any releationship defintions back to the layers and tables
         for id in relationships:
             relationships_param = {'relationships' : relationships[id]}
             request_parameters = {'f' : 'json', 'addToDefinition' : json.dumps(relationships_param), 'token' : connection['token']}
             admin_url = '{0}/rest/admin/services{1}/{2}/addToDefinition'.format(new_fs_url[:index], new_fs_url[index + len(find_string):], id)
-            _url_request(admin_url, request_parameters, connection['referer'], 'POST')
+            _solution_helpers.url_request(admin_url, request_parameters, connection['referer'], 'POST')
 
         # Update the item definition of the service
         item_properties = {}
@@ -500,8 +451,7 @@ def _main(connection, solution, maps_apps, extent, output_folder):
             created_items = []
 
             # Search for the map or app in the given organization using the map or app name and a specific tag
-            portalId = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
-            search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(portalId, 'one.click.solution', solution, map_app_name)
+            search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(_solution_helpers.PORTAL_ID, 'one.click.solution', solution, map_app_name)
             solutions = {}
             items = source.content.search(search_query)
             item = next((item for item in items if item.title == map_app_name), None)
