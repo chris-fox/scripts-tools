@@ -2,18 +2,16 @@
 1. Download or Clone this repo
 2. Install ArcGIS Pro 1.3
 3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. Run it as an administrator (You will likely need to run as an administrator, depending on where Pro was installed)
-4. Run the following commands from the command prompt:
-  `conda install -c conda-forge ipywidgets`
-  `conda install -c esri arcgis=0.1`
-  This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
-
+4. Run the following commands from the command prompt. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
+    - conda install -c conda-forge ipywidgets
+    - conda install -c esri arcgis=0.1
 5.	Extract the contents of arcgis.zip and copy and paste all the contained files to overwrite the contents in the directory below:
 C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\lib\site-packages\arcgis
 Note: Users will not have to do step 4 when we release, we are just doing this because the beta version has bugs that have since been fixed by the dev team, so this is the latest code.
 6.	Extract the contents of tools.zip. Open ArcGIS Pro and browse to the folder you extracted the toolbox and scrips tool to use the tools.
 
 #Using the tools#
-##Deploy Solutions##
+##Deploy Solutions Tool##
 This tool is used to clone an existing map or app into your organization. The organization or portal that is used as the target to clone the map or app is determined by the active portal in the current session of Pro. You can manage the active portal or sign-in/out of the portal in the upper-right corner of the application
 
 The tool looks for items (maps or apps) in the state & local try it live org with specific tags to determine what items can be cloned (We can modify this logic later as needed). To use the tool:
@@ -67,29 +65,27 @@ If you receive an error like the one above this is due to a bug that occurs when
 This can happen depending on how the layers were added to the webmap. If the layer was added by opening a feature service item in a new web map, or by searching for a layer than everything should be fine. The problem occurs if a layer was added to the map via a URL to the service. Layers added this way don’t have an item id associated with them so I am not currently picking these up as items to clone.
 I am interested to see how many maps this effects and then we can decide the best way to resolve this. It is a pretty easy fix to the webmap json if it isn’t many maps.
 
-##Update Domains##
+##Update Domains Tool##
 
 This tool is used to add, remove, or update the domain for a field in a hosted feature service. To use the tool:
 
 
-1.	Ensure you are logged into the portal as the owner of the hosted feature service you want to modify
-2.	Browse to the feature service you wish to modify or select it from the dropdown if it is in the map
-3.	Select the field that has the domain you wish to modify
-4.	If the field already has a domain, it will populate all the remaining parameters with the information about the domain.
-a.	To modify an existing coded value domain:
-i.	Change any code or value
-ii.	Add a new code/value pair
-iii.	Remove an existing code/value by clicking the row and clicking the red ‘x’ at the beginning of the row
-b.	To modify an existing range domain:
-i.	Change the min/max value
-c.	To add a new domain to a field:
-i.	Select the domain type
-ii.	Give the domain a name
-iii.	Input the codes/values or min/max for the domain
-d.	To remove a domain for a field:
-e.	Select ‘None’ for Type
-5.	Run the tool
+1. Ensure you are logged into the portal as the owner of the hosted feature service you want to modify
+2. Browse to the feature service you wish to modify or select it from the dropdown if it is in the map
+3. Select the field that has the domain you wish to modify
+4. If the field already has a domain, it will populate all the remaining parameters with the information about the domain.
+    - To modify an existing coded value domain
+        1. Change any code or value
+        2. Add a new code/value pair
+        3. Remove an existing code/value by selecting the row and clicking the red ‘x’ at the beginning of the row
+    - To modify an existing range domain, change the min/max value
+    - To add a new domain to a field
+        1. Select the domain type
+        2. Give the domain a name
+        3. Input the codes/values or min/max for the domain
+    - To remove a domain for a field, select ‘None’ for Type
+5. Run the tool
 
-##Add/Remove Field##
+##Add/Remove Field Tools##
 
 These tools are the out of the box GP tools. They already work on Hosted Feature services so no custom code for these workflows was necessary.
