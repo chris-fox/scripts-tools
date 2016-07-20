@@ -3,8 +3,13 @@
 2. Install ArcGIS Pro 1.3
 3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. (You will likely need to run as an administrator if Pro was installed with the default settings)
 4. Run the following commands from the command prompt. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
-    - conda install -c conda-forge ipywidgets
-    - conda install -c esri arcgis=0.1
+   
+    ```
+    conda install -c conda-forge ipywidgets
+    ```
+    ```
+    conda install -c esri arcgis=0.1
+    ```
 5. Go to https://github.com/ArcGIS/geosaurus and download or clone the repo
 6. Copy the contents of /src/arcgis and overwrite the contents of the arcgis package in your Pro 1.3 install location. By default this location would be C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\lib\site-packages\arcgis
     - Note: Users will not have to do step 5 and 6 when we release, we are just doing this because the beta version has bugs that have since been fixed so we want to use latest code.
@@ -28,7 +33,7 @@ The tool should create all the services, groups, maps and apps needed for the se
 
 ###How to add your own maps/apps to the tool###
 
-This tool is only designed to work on solutions that are entirely hosted, ie the services, maps and apps are all hosted by the portal. The tool by default looks for maps and apps in the state & local try it live org, http://statelocaltryit.maps.arcgis.com/ that contain specific tags.
+This tool is only designed to work on solutions that are entirely hosted, ie the services, maps and apps are all hosted by the portal. The tool by default looks for maps and apps in the [state & local try it live org](http://statelocaltryit.maps.arcgis.com/) that contain specific tags.
 
 To modify which org to search for items with the specified tags, change the value of the PORTAL_ID variable in the [_solution_helpers.py](https://github.com/chris-fox/scripts-tools/blob/master/Deploy%20Solutions/scripts/_solution_helpers.py) file to the ID of the organization that contains the items.
 
@@ -42,7 +47,8 @@ To add aditional maps and apps to the tool:
 2. Open the tool, it should search the organization for the items with the tags and add them to the dropdowns in the parameters.
 
 ###Known-Issues###
-* Failed to create service 'ExistingAddresses': {'error': {'code': 400, 'message': 'Unable to add feature service definition.', 'details': ["Column 'Shape' in table 'user_2461.ExistingAddresses_70fa36a3353641aeb9af86b49a6ec605_SITE_ADDRESS_POINTS' is of a type that is invalid for use as a key column in an index or statistics."]}}
+####Failed to create service####
+*'ExistingAddresses': {'error': {'code': 400, 'message': 'Unable to add feature service definition.', 'details': ["Column 'Shape' in table 'user_2461.ExistingAddresses_70fa36a3353641aeb9af86b49a6ec605_SITE_ADDRESS_POINTS' is of a type that is invalid for use as a key column in an index or statistics."]}}*
 
 If you receive an error like the one above this is due to a bug that occurs when the original service was published from ArcGIS 10.4 and Pro 1.2. The service contains some invalid index definitions and if you attempted to clone this service in arcgis.com it would also fail. Below are the steps to resolve this which require modifying the definition of the original service. If you are not comfortable with going through these steps, I can help out to get the service cleaned up.
 
@@ -50,27 +56,30 @@ If you receive an error like the one above this is due to a bug that occurs when
 2. In the url add ‘admin’ between ‘rest’ and ‘services’ (ie rest/admin/services) and hit enter
 3. Scroll to the bottom and click the link “delete from definition”
 4. Search in the delete from layer definition dialog for ‘indexes’ and examine the current indexes looking for duplicate indexes, or indexes with name of FDO_OBJECTID or FDO_SHAPE.
-5. Select all the text in the delete from layer definition dialog and use the JSON example below to delete these duplicate indexes from the layer
-{
-  "indexes" : [
-  {
-    "name" : "FDO_OBJECTID"
-  },
-  {
-    "name" : "FDO_SHAPE" 
-  }
-]
-}
+5. Clear out all the text in the delete from layer definition dialog and use the JSON example below to delete duplicate indexes from the service
+
+    ```
+    {
+      "indexes" : [
+      {
+        "name" : "FDO_OBJECTID"
+      },
+      {
+        "name" : "FDO_SHAPE" 
+      }
+    ]
+    }
+    ```
 6. Click Delete from Layer Definition
 
-* The services used by the web map are not created.
-This can happen depending on how the layers were added to the webmap. If the layer was added by opening a feature service item in a new web map, or by searching for a layer than everything should be fine. The problem occurs if a layer was added to the map via a URL to the service. Layers added this way don’t have an item id associated with them so I am not currently picking these up as items to clone.
+####Tool completes succesfully but no services created####
+This can happen depending on how the layers were added to the webmap. If the layer was added by opening a feature service item in a new web map, or by searching for a layer and adding it than everything should be fine. The problem occurs if a layer was added to the map via a URL to the service. Layers added this way don’t have an item id associated with them so I am not currently picking these up as items to clone.
+
 I am interested to see how many maps this effects and then we can decide the best way to resolve this. It is a pretty easy fix to the webmap json if it isn’t many maps.
 
 ##Update Domains Tool##
 
 This tool is used to add, remove, or update the domain for a field in a hosted feature service. To use the tool:
-
 
 1. Ensure you are logged into the portal as the owner of the hosted feature service you want to modify
 2. Browse to the feature service you wish to modify or select it from the dropdown if it is in the map
