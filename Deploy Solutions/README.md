@@ -1,4 +1,4 @@
-#Steps for setting up your environment to use the tools
+#Steps for setting up your environment to use the tools#
 1. Download or Clone this repo
 2. Install ArcGIS Pro 1.3
 3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. Run it as an administrator (You will likely need to run as an administrator, depending on where Pro was installed)
@@ -12,20 +12,20 @@ C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\lib\site-packages\arcg
 Note: Users will not have to do step 4 when we release, we are just doing this because the beta version has bugs that have since been fixed by the dev team, so this is the latest code.
 6.	Extract the contents of tools.zip. Open ArcGIS Pro and browse to the folder you extracted the toolbox and scrips tool to use the tools.
 
-Using the tools
-Deploy Solutions
+#Using the tools#
+##Deploy Solutions##
 This tool is used to clone an existing map or app into your organization. The organization or portal that is used as the target to clone the map or app is determined by the active portal in the current session of Pro. You can manage the active portal or sign-in/out of the portal in the upper-right corner of the application:
 
- 
-The tool looks for items (maps or apps) in the state & local try it live org with specific tags to determine what items can be cloned (We can modify this logic later as needed).
-To use the tool:
-1.	Ensure you are logged into the portal you wish to create the content in
-2.	Select the name of the solution containing the maps and apps you wish to create
-3.	Select one or more map and apps
-4.	Specify the default output extent of the maps and apps
-a.	Default will use the default extent defined in the target portal
-b.	Alternatively select the extent of the current extent in the map, layer, or dataset
-5.	Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
+The tool looks for items (maps or apps) in the state & local try it live org with specific tags to determine what items can be cloned (We can modify this logic later as needed). To use the tool:
+
+
+1. Ensure you are logged into the portal you wish to create the content in
+2. Select the name of the solution containing the maps and apps you wish to create
+3. Select one or more map and apps
+4. Specify the default output extent of the maps and apps
+  a. Default will use the default extent defined in the target portal
+  b. Alternatively select the extent of the current extent in the map, layer, or dataset
+5. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
 Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
 6.	Run the tool
 The tool should create all the services, groups, maps and apps needed for the selected solution. By default, everything remains private, unless shared with a group for group web application.
