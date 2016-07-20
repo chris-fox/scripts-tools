@@ -14,7 +14,7 @@ Note: Users will not have to do step 4 when we release, we are just doing this b
 
 #Using the tools#
 ##Deploy Solutions##
-This tool is used to clone an existing map or app into your organization. The organization or portal that is used as the target to clone the map or app is determined by the active portal in the current session of Pro. You can manage the active portal or sign-in/out of the portal in the upper-right corner of the application:
+This tool is used to clone an existing map or app into your organization. The organization or portal that is used as the target to clone the map or app is determined by the active portal in the current session of Pro. You can manage the active portal or sign-in/out of the portal in the upper-right corner of the application
 
 The tool looks for items (maps or apps) in the state & local try it live org with specific tags to determine what items can be cloned (We can modify this logic later as needed). To use the tool:
 
@@ -29,7 +29,9 @@ The tool looks for items (maps or apps) in the state & local try it live org wit
 Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
 6.	Run the tool
 The tool should create all the services, groups, maps and apps needed for the selected solution. By default, everything remains private, unless shared with a group for group web application.
-How to add your own maps/apps to the tool
+
+###How to add your own maps/apps to the tool###
+
 This tool is only designed to work on solutions that are entirely hosted, ie the services, maps and apps are all hosted by the portal. The tool looks for maps and apps in the state & local try it live org, http://statelocaltryit.maps.arcgis.com/ that contain specific tags. We can modify this in the future as we settle on which org will host this content. To add a map or app to the tool from this org do the following:
 
 1.	Browse to the item in the org, the map or app.
@@ -39,8 +41,8 @@ b.	solution.SolutionName (Replace SolutionName with the name of the solution ass
 Note: Only add these tags to final component of the solution. For example, if it is geoform application, just add the tag to the item associated with the geoform app. You don’t need to add the tags to the map or services that make up the app. If it is a collector map, just add the tags to the item for the collector map, etc.
 3.	Open the tool, it should search the organization for the items with the tags and add them to the dropdowns in the parameters.
 
-Known-Issues
-1.	Failed to create service 'ExistingAddresses': {'error': {'code': 400, 'message': 'Unable to add feature service definition.', 'details': ["Column 'Shape' in table 'user_2461.ExistingAddresses_70fa36a3353641aeb9af86b49a6ec605_SITE_ADDRESS_POINTS' is of a type that is invalid for use as a key column in an index or statistics."]}}
+###Known-Issues###
+* Failed to create service 'ExistingAddresses': {'error': {'code': 400, 'message': 'Unable to add feature service definition.', 'details': ["Column 'Shape' in table 'user_2461.ExistingAddresses_70fa36a3353641aeb9af86b49a6ec605_SITE_ADDRESS_POINTS' is of a type that is invalid for use as a key column in an index or statistics."]}}
 
 If you receive an error like the one above this is due to a bug that occurs when the original service was published from ArcGIS 10.4 and Pro 1.2. The service contains some invalid index definitions and if you attempted to clone this service in arcgis.com it would also fail. Below are the steps to resolve this which require modifying the definition of the original service. If you are not comfortable with going through these steps, I can help out to get the service cleaned up.
 
@@ -61,14 +63,15 @@ If you receive an error like the one above this is due to a bug that occurs when
 }
 6. Click Delete from Layer Definition
 
-2.	The services used by the web map are not created.
+* The services used by the web map are not created.
 This can happen depending on how the layers were added to the webmap. If the layer was added by opening a feature service item in a new web map, or by searching for a layer than everything should be fine. The problem occurs if a layer was added to the map via a URL to the service. Layers added this way don’t have an item id associated with them so I am not currently picking these up as items to clone.
 I am interested to see how many maps this effects and then we can decide the best way to resolve this. It is a pretty easy fix to the webmap json if it isn’t many maps.
 
-Update Domains
-This tool is used to add, remove, or update the domain for a field in a hosted feature service. 
+##Update Domains##
 
-To use the tool:
+This tool is used to add, remove, or update the domain for a field in a hosted feature service. To use the tool:
+
+
 1.	Ensure you are logged into the portal as the owner of the hosted feature service you want to modify
 2.	Browse to the feature service you wish to modify or select it from the dropdown if it is in the map
 3.	Select the field that has the domain you wish to modify
@@ -87,5 +90,6 @@ d.	To remove a domain for a field:
 e.	Select ‘None’ for Type
 5.	Run the tool
 
-Add/Remove Field
+##Add/Remove Field##
+
 These tools are the out of the box GP tools. They already work on Hosted Feature services so no custom code for these workflows was necessary.
