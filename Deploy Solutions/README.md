@@ -2,7 +2,7 @@
 1. Download or Clone this repo
 2. Install ArcGIS Pro 1.3
 3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. (You will likely need to run as an administrator if Pro was installed with the default settings)
-4. Run the following commands from the command prompt. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
+4. Run the following commands. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
    
     ```
     conda install -c conda-forge ipywidgets
@@ -95,6 +95,16 @@ This tool is used to add, remove, or update the domain for a field in a hosted f
         2. Give the domain a name
         3. Input the codes/values or min/max for the domain
     - To remove a domain for a field, select ‘None’ for Type
+5. Run the tool
+
+##Alter Field Alias Tool##
+
+This tool is used to add, remove, or update the domain for a field in a hosted feature service. To use the tool:
+
+1. Ensure you are logged into the portal as the owner of the hosted feature service you want to modify
+2. Browse to the feature service you wish to modify or select it from the dropdown if it is in the map
+3. Select the field that has the domain you wish to modify
+4. Change the alias of the field
 5. Run the tool
 
 ##Add/Remove Field Tools##
