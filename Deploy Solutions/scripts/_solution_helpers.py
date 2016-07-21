@@ -85,23 +85,6 @@ def get_fields(parameter):
     except:
         return "Failed To Connect"
 
-def get_relationships(parameter):
-    admin_url = get_admin_url(parameter)
-    if admin_url in ["Invalid URL", "Failed To Connect"]:
-        return admin_url
-
-    try:      
-        token = arcpy.GetSigninToken()
-        request_parameters = {'f' : 'json', 'token' : token['token'] }
-        resp = url_request(admin_url, request_parameters, token['referer'])
-        
-        if "serviceItemId" not in resp:
-            return "Failed To Connect"
-
-        return json.dumps(resp['relationships'])
-    except:
-        return "Failed To Connect"
-
 def get_admin_url(parameter):
     url = None
     input = parameter.value
