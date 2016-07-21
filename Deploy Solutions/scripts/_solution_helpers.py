@@ -23,6 +23,14 @@ from urllib.parse import urlencode as encode
 from urllib.parse import urlparse as parse
 
 PORTAL_ID = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
+VALIDATION_JSON = {}
+
+def get_validation_json():
+    return VALIDATION_JSON
+
+def set_validation_json(validation_json):
+    global VALIDATION_JSON
+    VALIDATION_JSON = validation_json
 
 def url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.
