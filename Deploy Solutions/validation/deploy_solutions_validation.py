@@ -53,13 +53,9 @@ class ToolValidator(object):
                 self.params[0].filter.list = sorted([solution_name for solution_name in solutions])
                 self.params[4].value = json.dumps(solutions)
 
-                portal_description = json.loads(arcpy.GetPortalDescription())
-                username = portal_description['user']['username']
-                token = arcpy.GetSigninToken()
-                request_parameters = {'f' : 'json', 'token' : token['token'] }
-                url = "{0}/sharing/rest/content/users/{1}".format(arcpy.GetActivePortalURL(), username)
-                resp = _solution_helpers.url_request(url, request_parameters, token['referer'])
-                self.params[3].filter.list = [folder['title'] for folder in resp['folders']]
+                target = gis.GIS('pro')
+                folders = target.users.me.folders
+                self.params[3].filter.list = sorted([folder['title'] for folder in folders])
                 return
 
             solutions = json.loads(self.params[4].valueAsText)        
