@@ -16,13 +16,14 @@
  ------------------------------------------------------------------------------
  """
 import arcpy, webbrowser
+from arcgis import gis
 
 def main():   
     try:
         url = arcpy.GetParameterAsText(2)
         webbrowser.open(url)
     except Exception as e:
-        arcpy.AddError("Failed to open application: {0}".format(str(e)))
+        arcpy.AddError("Failed to open url: {0}".format(str(e)))
 
 if __name__ == "__main__":
     main()

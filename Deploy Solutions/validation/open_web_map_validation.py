@@ -37,27 +37,36 @@ class ToolValidator(object):
         validation is performed. This method is called whenever a parameter
         has been changed."""
         if not self.params[3].value:
-            target = gis.GIS('pro')          
-            current_user = target.users.me
-            content = current_user.content()
-            for key in content:
-                content[key] = [item for item in content[key] if item.type == 'Web Map']
-            content[current_user.username] = content['/']
-            del content['/']
-            self.params[0].filter.list= sorted(content.keys())
-            _solution_helpers.set_validation_json(content)
+            target = gis.GIS('pro')
+            current_user = target.users.me    
+            folders = current_user.folders  
+            username = current_user.username     
+            validation_dict = { 'portal' : target, 'username' : username }
+            _solution_helpers.set_validation_dict(validation_dict)
+            folders = sorted([folder['title'] for folder in folders])
+            folders.insert(0, username)
+            self.params[0].filter.list = folders
             self.params[3].value = True
 
         if not self.params[0].hasBeenValidated and self.params[0].value is not None:
-            content = _solution_helpers.get_validation_json()
+            validation_dict = _solution_helpers.get_validation_dict()
+            target = validation_dict['portal']
             folder = self.params[0].valueAsText
-            self.params[1].filter.list = sorted([item.title for item in content[folder]])
+            if folder == validation_dict['username']:
+                folder = None
+            items = [item for item in target.users.me.items(folder) if item.type.lower() == "web map"] 
+            validation_dict['items'] = items
+            _solution_helpers.set_validation_dict(validation_dict)
+            self.params[1].value = None
+            self.params[1].filter.list = sorted([item.title for item in items])          
 
         if not self.params[1].hasBeenValidated and self.params[1].value is not None and self.params[0].value is not None:
-            content = _solution_helpers.get_validation_json()
-            folder = self.params[0].valueAsText
-            webmap = next((item for item in content[folder] if item.title == self.params[1].valueAsText), None)
-            self.params[2].value = webmap.id
+            items = _solution_helpers.get_validation_dict()['items']
+            webmap = next((item for item in items if item.title == self.params[1].valueAsText), None)
+            if webmap is None:
+                return
+            url = "{0}home/webmap/viewer.html?webmap={1}".format(arcpy.GetActivePortalURL(), webmap.id)
+            self.params[2].value = url
         return
     
     def updateMessages(self):

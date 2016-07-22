@@ -439,12 +439,10 @@ def _main(connection, solution, maps_apps, extent, output_folder):
     webmap_mapping = {}   
     
     # If the folder does not already exist create a new folder
-    folder = {}
-    folder_id = target._portal.get_folder_id(connection['username'], output_folder)
-    if folder_id is None:
+    folders = target.users.me.folders
+    folder = next((folder for folder in folders if folder['title'] == output_folder), None)
+    if folder is None:
         folder = target.content.create_folder(output_folder)
-    else:
-        folder = {'title' : output_folder, 'id': folder_id}
 
     for map_app_name in maps_apps:
         try:
