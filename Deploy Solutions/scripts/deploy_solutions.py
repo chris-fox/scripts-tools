@@ -18,13 +18,29 @@
 import json, uuid, re, tempfile, _solution_helpers
 from arcgis import gis, lyr
 
-ITEM_UPDATE_PROPERTIES = ['title', 'type', 'description', 
+IS_RUN_FROM_PRO = False
+TAG = 'one.click.solution'
+ITEM_PROPERTY_NAMES = ['title', 'type', 'description', 
                           'snippet', 'tags', 'culture',
                         'accessInformation', 'licenseInfo', 'typeKeywords']
-IS_RUN_FROM_PRO = False
 
 class ItemCreateException(Exception):
     pass
+
+def _get_item_properties(item, extent=None):
+    item_properties = {}
+    for property_name in ITEM_PROPERTY_NAMES:
+        item_properties[property_name] = item[property_name]
+
+    item_properties['typeKeywords'].append("source-{0}".format(item['id']))
+    if TAG in item_properties['tags']:
+        item_properties['tags'].remove(TAG)
+        item_properties['typeKeywords'].append(TAG)
+    item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
+    item_properties['tags'] = ','.join(item_properties['tags'])   
+    item_properties['extent'] = extent
+
+    return item_properties
 
 def _clone_group(connection, group, folder=None):
     """Clone a new group from an existing group.
@@ -39,7 +55,7 @@ def _clone_group(connection, group, folder=None):
         
         title = group['title']
         group['tags'].append("source-{0}".format(group['id']))
-        if folder is not None:
+        if folder:
             group['tags'].append("sourcefolder-{0}".format(folder['id']))
         tags = ','.join(group['tags'])
     
@@ -56,9 +72,6 @@ def _clone_group(connection, group, folder=None):
         new_group = target.groups.create(title, tags, group['description'], group['snippet'],
                                          'private', group.get_thumbnail_link(), True,
                                          group['sortField'], group['sortOrder'], True)
-        if new_group is None:
-            raise Exception()
-
         return new_group
     except Exception as e:
         raise ItemCreateException("Failed to create group '{0}': {1}".format(group['title'], str(e)), new_group)
@@ -73,18 +86,18 @@ def _clone_feature_service(connection, feature_service, extent, folder=None):
 
     try:
         new_item = None
-        original_item = feature_service['item']
+        original_item = feature_service['iteminfo']
         target = connection['target']       
 
         # Get the definition of the original feature service
-        fs_json = feature_service['featureService']
+        fs_json = feature_service['serviceDefinition']
 
         # Create a new service from the definition of the original feature service
         for key in ['layers', 'tables']:
             del fs_json[key]     
         fs_json['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
         url = "{0}sharing/rest/content/users/{1}/".format(connection['url'], connection['username'])
-        if folder is not None:
+        if folder:
             url += "{0}/".format(folder['id'])
         url += 'createService'
         request_parameters = {'f' : 'json', 'createParameters' : json.dumps(fs_json), 
@@ -93,7 +106,7 @@ def _clone_feature_service(connection, feature_service, extent, folder=None):
         new_item = target.content.get(resp['itemId'])        
     
         # Get the layer and table definitions from the original service
-        layers_json = feature_service['layers']
+        layers_json = feature_service['layersDefinition']
 
         # Need to remove relationships first and add them back individually 
         # after all layers and tables have been added to the definition
@@ -127,20 +140,16 @@ def _clone_feature_service(connection, feature_service, extent, folder=None):
             _solution_helpers.url_request(admin_url, request_parameters, connection['referer'], 'POST')
 
         # Update the item definition of the service
-        item_properties = {}
-        for property_name in ITEM_UPDATE_PROPERTIES:
-            item_properties[property_name] = original_item[property_name]
-
-        item_properties['tags'].append("source-{0}".format(original_item['id']))
-        item_properties['tags'] = ','.join(item_properties['tags'])
-        item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
-        item_properties['extent'] = extent
+        item_properties = _get_item_properties(original_item, extent)
         item_properties['text'] = feature_service['data']
-
         with tempfile.TemporaryDirectory() as temp_dir:
             thumbnail_file = original_item.download_thumbnail(temp_dir)  
             new_item.update(item_properties=item_properties, thumbnail=thumbnail_file)
     
+        # Share the item
+        if feature_service['sharing']:
+            _share_item(new_item, webmap['sharing'])
+
         return new_item
     except Exception as e:
         raise ItemCreateException("Failed to create service '{0}': {1}".format(original_item['title'], str(e)), new_item)
@@ -158,19 +167,12 @@ def _clone_webmap(connection, webmap, service_mapping, extent, folder=None):
     
     try:
         new_item = None
-        original_item = webmap['item']
+        original_item = webmap['iteminfo']
         target = connection['target']
         
         # Get the item properties from the original web map which will be applied when the new item is created
-        item_properties = {}
-        for property_name in ITEM_UPDATE_PROPERTIES:
-            item_properties[property_name] = original_item[property_name]
-
+        item_properties = _get_item_properties(original_item, extent)
         item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
-        item_properties['tags'].append("source-{0}".format(original_item['id']))
-        item_properties['tags'] = ','.join(item_properties['tags'])
-        item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
-        item_properties['extent'] = extent
 
         # Swizzle the item ids and URLs of the operational layers and tables in the web map
         webmap_json = webmap['data']
@@ -198,9 +200,9 @@ def _clone_webmap(connection, webmap, service_mapping, extent, folder=None):
             thumbnail_file = original_item.download_thumbnail(temp_dir)
             new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail_file, folder=folder['title'])
 
-        # Share the item with the group if provided
-        if webmap['sharing']['groups'] is not None:
-            new_item.share(groups=webmap['sharing']['groups'])
+        # Share the item
+        if webmap['sharing']:
+            _share_item(new_item, webmap['sharing'])
 
         return new_item
     except Exception as e:
@@ -220,17 +222,11 @@ def _clone_app(connection, app, service_mapping, webmap_mapping, group_mapping, 
     
     try:
         new_item = None
-        original_item = app['item']
+        original_item = app['iteminfo']
         target = connection['target']
 
         # Get the item properties from the original application which will be applied when the new item is created
-        item_properties = {}
-        for property_name in ITEM_UPDATE_PROPERTIES:
-            item_properties[property_name] = original_item[property_name]
-
-        item_properties['tags'].append("source-{0}".format(original_item['id']))
-        item_properties['tags'] = ','.join(item_properties['tags'])
-        item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
+        item_properties = _get_item_properties(original_item)
 
         # Swizzle the item ids of the web maps, groups and URLs of definied in the application's data
         app_json = app['data']
@@ -277,7 +273,7 @@ def _clone_app(connection, app, service_mapping, webmap_mapping, group_mapping, 
             new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail_file, folder=folder['title'])
 
         # Update the url of the item to point to the new portal and new id of the application
-        if original_item['url'] is not None:
+        if original_item['url']:
             find_string = "/apps/"
             index = original_item['url'].find(find_string)
             new_url = '{0}{1}'.format(connection['url'].rstrip('/'), original_item['url'][index:])
@@ -287,15 +283,31 @@ def _clone_app(connection, app, service_mapping, webmap_mapping, group_mapping, 
             item_properties = {'url' : new_url}
             new_item.update(item_properties)
     
-        # Share the item with the group if provided
-        if app['sharing']['groups'] is not None:
-            new_item.share(groups=app['sharing']['groups'])
+        # Share the item
+        if app['sharing']:
+            _share_item(new_item, app['sharing'])
 
         return new_item
     except Exception as e:
         raise ItemCreateException("Failed to create application '{0}': {1}".format(original_item.title, str(e)), new_item)
 
-def _get_original_solution_items(source, item, solution_items, groups=None):
+def _update_group_sharing(items, group_mapping):
+    for item in items:
+        if 'sharing' in item and item['sharing']['groups']:
+            for group_id in list(item['sharing']['groups']):
+                if group_id in group_mapping:
+                    item['sharing']['groups'].remove(group_id)
+                    item['sharing']['groups'].append(group_mapping[group_id])
+
+def _share_item(item, sharing):
+    everyone = sharing['access'] == 'everyone'
+    org = sharing['access'] == 'org'
+    groups = ''
+    if sharing['groups']:
+        groups = ','.join(sharing['groups'])
+    item.share(everyone, org, groups)
+
+def _get_solution_definition(source, item, solution_definition, groups=None):
     """Get the children item and item data of a given item. This is used to recursively find all the items that make up a given map or app.
     Keyword arguments:
     source - The portal containing the item
@@ -306,10 +318,8 @@ def _get_original_solution_items(source, item, solution_items, groups=None):
     #If the item is an application or dashboard find the web map or group that the application is built from
     if item['type'].lower() in ['web mapping application','operation view']:
         app_json = item.get_data()
-        if 'apps' not in solution_items:
-            solution_items['apps'] = []
         
-        solution_items['apps'].append({'item' : item, 'data' : app_json, 'sharing' : {
+        solution_definition['items'].append({'iteminfo' : item, 'data' : app_json, 'sharing' : {
 				"access": "private",
 				"groups": groups
 					}})
@@ -330,71 +340,66 @@ def _get_original_solution_items(source, item, solution_items, groups=None):
         else: #Configurable Application Template
             if 'values' in app_json:
                 if 'group' in app_json['values']:
-                    if 'groups' not in solution_items:
-                        solution_items['groups'] = []
-
                     group_id = app_json['values']['group']
-                    group = next((g for g in solution_items['groups'] if g['id'] == group_id), None)
+                    group = next((g for g in solution_definition['groups'] if g['id'] == group_id), None)
                     if not group:
                         group = source.groups.get(group_id)
-                        solution_items['groups'].append(group)
+                        solution_definition['groups'].append(group)
                     
                     search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
-                    items = source.content.search(search_query, max_items=100)
-                    for item in items:
-                        if item['type'].lower() == 'web map':
-                            _get_original_solution_items(source, item, solution_items, [group_id])
+                    group_items = source.content.search(search_query, max_items=100)
+                    for group_item in group_items:
+                        if group_item['type'].lower() == 'web map':
+                            webmap = next((item for item in solution_definition['items'] if item['iteminfo']['id'] == group_item['id']), None)
+                            if not webmap:
+                                _get_solution_definition(source, group_item, solution_definition, [group_id])
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
         
-        if webmap_id is not None:
-            webmap = source.content.get(webmap_id)
-            _get_original_solution_items(source, webmap, solution_items)
+        if webmap_id:
+            webmap = next((item for item in solution_definition['items'] if item['iteminfo']['id'] == webmap_id), None)
+            if not webmap:
+                webmap = source.content.get(webmap_id)
+                _get_solution_definition(source, webmap, solution_definition)
 
     #If the item is a web map find all the feature service layers and tables that make up the map
     elif item['type'].lower() == 'web map':
         webmap_json = item.get_data()
-        if 'maps' not in solution_items:
-            solution_items['maps'] = []
-
-        solution_items['maps'].append({'item' : item, 'data' : webmap_json, 'sharing' : {
+        solution_definition['items'].append({'iteminfo' : item, 'data' : webmap_json, 'sharing' : {
 				"access": "private",
 				"groups": groups
 					}})
-
-        if 'featureServices' not in solution_items:
-            solution_items['featureServices'] = []
         
         if 'operationalLayers' in webmap_json:
             for layer in webmap_json['operationalLayers']:
                 if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer":
                     if 'itemId' in layer:
-                        service = next((s for s in solution_items['featureServices'] if s['item']['id'] == layer['itemId']), None)
+                        service = next((item for item in solution_definition['items'] if item['iteminfo']['id'] == layer['itemId']), None)
                         if not service:
                             item = source.content.get(layer['itemId'])
-                            solution_items['featureServices'].append(_get_feature_service_defintion(source, item))
+                            solution_definition['items'].append(_get_feature_service_defintion(source, item))
 
         if 'tables' in webmap_json:
             for table in webmap_json['tables']:
                     if 'itemId' in table:
-                        service = next((s for s in solution_items['featureServices'] if s['item']['id'] == table['itemId']), None)
+                        service = next((item for item in solution_definition['items'] if item['iteminfo']['id'] == table['itemId']), None)
                         if not service:
                             item = source.content.get(table['itemId'])
-                            solution_items['featureServices'].append(_get_feature_service_defintion(source, item))
+                            solution_definition['items'].append(_get_feature_service_defintion(source, item))
 
 def _get_feature_service_defintion(source, item):
     feature_service = lyr.FeatureService(item)
     request_parameters = {'f' : 'json'}
-    fs_json = _solution_helpers.url_request(feature_service.url, request_parameters)
-    layers_json = _solution_helpers.url_request(feature_service.url + '/layers', request_parameters)
+    service_definition = _solution_helpers.url_request(feature_service.url, request_parameters)
+    layers_defintion = _solution_helpers.url_request(feature_service.url + '/layers', request_parameters)
     data = item.get_data()
-    return { 'item' : item, 'data' : data, 'featureService' : fs_json, 'layers' : layers_json, 'sharing' : {
+    return { 'iteminfo' : item, 'data' : data, 'serviceDefinition' : service_definition, 'layersDefinition' : layers_defintion, 'sharing' : {
 				"access": "private",
 				"groups": None
 					}}
   
-def _get_existing_item(connection, source_id, folder, type):
+def _get_existing_item(item, folder_items):
     """Test if an item with a given source tag already exists in the user's content. 
     This is used to determine if the service, map or app has already been created in the folder.
     Keyword arguments:
@@ -403,13 +408,8 @@ def _get_existing_item(connection, source_id, folder, type):
     folder - The folder to search for the item within
     type - Type of item we are searching for"""  
    
-    target = connection['target']
-    search_query = 'owner:{0} AND tags:"source-{1}" AND type:{2}'.format(connection['username'], source_id, type)
-    items = target.content.search(search_query, max_items=100, outside_org=False)
-    for item in items:
-        if item['ownerFolder'] == folder['id']:
-            return item
-    return None 
+    return next((folder_item for folder_item in folder_items if folder_item['type'] == item['type'] 
+                          and "source-{0}".format(item['id']) in folder_item['typeKeywords']), None)
 
 def _get_existing_group(connection, source_id, folder):
     """Test if a group with a given source tag already exists in the organization. 
@@ -457,127 +457,134 @@ def _main(connection, solution, maps_apps, extent, output_folder):
 
     source = gis.GIS()
     target = connection['target']
+    
     group_mapping = {}   
     service_mapping = []
     webmap_mapping = {}   
     
     # If the folder does not already exist create a new folder
-    folders = target.users.me.folders
+    current_user = target.users.me
+    folders = current_user.folders
     folder = next((folder for folder in folders if folder['title'] == output_folder), None)
-    if folder is None:
+    if not folder:
         folder = target.content.create_folder(output_folder)
+    
+    # Get the all items in the folder
+    folder_items = current_user.items(folder['title'])
 
     for map_app_name in maps_apps:
         try:
             created_items = []
 
             # Search for the map or app in the given organization using the map or app name and a specific tag
-            search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(_solution_helpers.PORTAL_ID, 'one.click.solution', solution, map_app_name)
+            search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(_solution_helpers.PORTAL_ID, TAG, solution, map_app_name)
             solutions = {}
             items = source.content.search(search_query)
             item = next((item for item in items if item.title == map_app_name), None)
-            if item is None:
+            if not item:
                 continue
 
             # Check if the item has already been cloned into the target portal and if so, continue on to the next map or app.
-            existing_item = _get_existing_item(connection, item.id, folder, item['type'])
-            if existing_item is not None:
+            existing_item = _get_existing_item(item, folder_items)
+            if existing_item:
                 _add_message("'{0}' already exists in your {1} folder".format(item.title, folder['title']))
                 _add_message('------------------------')
                 continue
 
-            # Get the services, groups, maps and apps that make up the solution
-            solution_items = {}
-            _get_original_solution_items(source, item, solution_items)
-
+            # Get the definitions of the services, groups, maps and apps that make up the solution
+            solution_definition = { 'items' : [], 'groups' : [] }
+            _get_solution_definition(source, item, solution_definition)
             message = 'Deploying {0}'.format(map_app_name)
             _add_message(message) 
 
+            # If run from the application set the progressor
             if IS_RUN_FROM_PRO:
                 import arcpy
-                item_count = len([type for type in solution_items for item in solution_items[type]])
+                item_count = len([type for type in solution_definition for item in solution_definition[type]])
                 arcpy.SetProgressor('step', message, 0, item_count, 1)
 
             # Process and clone the groups that don't already exist
-            if 'groups' in solution_items:
-                groups = solution_items['groups']
-                for group in groups:
-                    if group['id'] in group_mapping: #We have already found or created this item
-                        _move_progressor()
-                        continue
+            for group in solution_definition['groups']:
+                if group['id'] in group_mapping: #We have already found or created this item
+                    _add_message("Existing group '{0}' found".format(new_group.title))
+                    _move_progressor()
+                    continue
                 
-                    new_group = _get_existing_group(connection, group['id'], folder)
-                    if new_group is None:
-                        new_group = _clone_group(connection, group, folder)
-                        created_items.append(new_group)
-                        _add_message("Created group '{0}'".format(new_group.title))
-                    else:
-                        _add_message("Existing group '{0}' found".format(new_group.title))
-                    group_mapping[group['id']] = new_group['id']
+                new_group = _get_existing_group(connection, group['id'], folder)
+                if not new_group:
+                    new_group = _clone_group(connection, group, folder)
+                    created_items.append(new_group)
+                    _add_message("Created group '{0}'".format(new_group['title']))
+                else:
+                    _add_message("Existing group '{0}' found".format(new_group['title']))
+                group_mapping[group['id']] = new_group['id']
+                _move_progressor()
+
+            #Update the group sharing definition for items using the new group ids
+            _update_group_sharing(solution_definition['items'], group_mapping)
+
+            # Process and clone the feature services that don't already exist
+            for feature_service in [item for item in solution_definition['items'] if item['iteminfo']['type'].lower() == 'feature service']:
+                original_item = feature_service['iteminfo'] 
+
+                if original_item['id'] in [service_map[0][0] for service_map in service_mapping]: #We have already found or created this item
+                    _add_message("Existing service '{0}' found in your {1} folder".format(original_item['title'], folder['title'])) 
                     _move_progressor()
+                    continue
 
-            # Process and clone the services that don't already exist
-            if 'featureServices' in solution_items:
-                feature_services = solution_items['featureServices']
-                for feature_service in feature_services:
-                    original_item = feature_service['item'] 
-                    if original_item['type'] != 'Feature Service':
-                        continue #TODO, throw error
+                new_item = _get_existing_item(original_item, folder_items)
+                if not new_item:                     
+                    new_item = _clone_feature_service(connection, feature_service, extent, folder)
+                    created_items.append(new_item)
+                    folder_items.append(new_item)
+                    _add_message("Created service '{0}'".format(new_item['title']))   
+                else:
+                    _add_message("Existing service '{0}' found in your {1} folder".format(new_item.title, folder['title']))          
+                service_mapping.append([(original_item['id'], original_item['url']),
+                                            (new_item['id'], new_item['url'])])
+                _move_progressor()
 
-                    if original_item['id'] in [service_map[0][0] for service_map in service_mapping]: #We have already found or created this item
-                        _move_progressor()
-                        continue
+            # Process and clone the web maps that don't already exist
+            for map in [item for item in solution_definition['items'] if item['iteminfo']['type'].lower() == 'web map']:
+                original_item = map['iteminfo']
 
-                    new_item = _get_existing_item(connection,  original_item['id'], folder, 'Feature Service')
-                    if new_item is None:                     
-                        new_item = _clone_feature_service(connection, feature_service, extent, folder)
-                        created_items.append(new_item)
-                        _add_message("Created service '{0}'".format(new_item['title']))   
-                    else:
-                        _add_message("Existing service '{0}' found in {1}".format(new_item.title, folder['title']))          
-                    service_mapping.append([(original_item['id'], original_item['url']),
-                                                (new_item['id'], new_item['id'])])
+                if original_item['id'] in webmap_mapping: #We have already found or created this item
+                    _add_message("Existing map '{0}' found in your {1} folder".format(original_item['title'], folder['title']))  
                     _move_progressor()
-
-            # Process and clone the maps that don't already exist
-            if 'maps' in solution_items:
-                for map in solution_items['maps']:
-                    original_item = map['item']
-
-                    if original_item['id'] in webmap_mapping: #We have already found or created this item
-                        _move_progressor()
-                        continue
+                    continue
           
-                    new_item = _get_existing_item(connection, original_item['id'], folder, 'Web Map')
-                    if new_item is None:
-                        new_item = _clone_webmap(connection, map, service_mapping, extent, folder)
-                        created_items.append(new_item)
-                        _add_message("Created map '{0}'".format(new_item['title']))
-                    else:
-                        _add_message("Existing map '{0}' found in {1}".format(new_item['title'], folder['title']))  
-                    webmap_mapping[original_item['id']] =  new_item['id']
-                    _move_progressor()
+                new_item = _get_existing_item(original_item, folder_items)
+                if not new_item:
+                    new_item = _clone_webmap(connection, map, service_mapping, extent, folder)
+                    created_items.append(new_item)
+                    folder_items.append(new_item)
+                    _add_message("Created map '{0}'".format(new_item['title']))
+                else:
+                    _add_message("Existing map '{0}' found in your {1} folder".format(new_item['title'], folder['title']))  
+                webmap_mapping[original_item['id']] =  new_item['id']
+                _move_progressor()
 
             # Process and clone the apps that don't already exist
-            if 'apps' in solution_items:
-                for app in solution_items['apps']:
-                    original_item = app['item']
+            for app in [item for item in solution_definition['items'] if item['iteminfo']['type'].lower() in ['web mapping application','operation view']]:
+                original_item = app['iteminfo']
 
-                    new_item = _get_existing_item(connection, original_item['id'], folder, original_item['type'])
-                    if new_item is None:                   
-                        new_item = _clone_app(connection, app, service_mapping, webmap_mapping, group_mapping, folder)
-                        created_items.append(new_item)
-                        _add_message("Created application '{0}'".format(new_item['title']))
-                    else:
-                        _add_message("Existing application '{0}' found in {1}".format(new_item['title'], folder['title'])) 
-                    _move_progressor()          
+                new_item = _get_existing_item(original_item, folder_items)
+                if not new_item:                   
+                    new_item = _clone_app(connection, app, service_mapping, webmap_mapping, group_mapping, folder)
+                    created_items.append(new_item)
+                    folder_items.append(new_item)
+                    _add_message("Created application '{0}'".format(new_item['title']))
+                else:
+                    _add_message("Existing application '{0}' found in your {1} folder".format(new_item['title'], folder['title'])) 
+                _move_progressor()          
 
             _add_message('Successfully added {0}'.format(map_app_name))
             _add_message('------------------------')
+
         except Exception as e:
             if type(e) == ItemCreateException:
                 _add_message(e.args[0], 'Error')
-                if e.args[1] is not None:
+                if e.args[1]:
                     created_items.append(e.args[1])
             else:
                 _add_message(str(e), 'Error')
@@ -607,7 +614,7 @@ def run(portal_url, username, pw, solution, maps_apps, extent, output_folder):
     IS_RUN_FROM_PRO = False
     _main(connection, solution, maps_apps, extent, output_folder)
 
-if __name__ == "__main__":    
+if __name__ == "__main__":         
     connection = None
     try:
         # Specify that we are running within Pro
@@ -624,7 +631,7 @@ if __name__ == "__main__":
     except Except:
         arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
 
-    if connection is not None:
+    if connection:
         # Get the input parameters
         solution = arcpy.GetParameterAsText(0)
         maps_apps = sorted(list(set(arcpy.GetParameter(1)))) 
@@ -633,7 +640,7 @@ if __name__ == "__main__":
         arcpy.SetParameterAsText(4, '')
 
         # Get the default extent of new maps defined in the portal
-        if extent is None:
+        if not extent:
             portal_description = json.loads(arcpy.GetPortalDescription())
             default_extent = portal_description['defaultExtent']
             coordinates = [[default_extent['xmin'], default_extent['ymin']], 
