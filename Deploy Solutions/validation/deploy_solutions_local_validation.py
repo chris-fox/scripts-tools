@@ -15,7 +15,7 @@
  | limitations under the License.
  ------------------------------------------------------------------------------
  """
-import json, arcpy
+import json, arcpy, os
 from scripts import _solution_helpers
 from arcgis import gis
 
@@ -36,34 +36,29 @@ class ToolValidator(object):
         """Modify the values and properties of parameters before internal
         validation is performed. This method is called whenever a parameter
         has been changed."""
-        if not self.params[1].hasBeenValidated:
-            if self.params[5].value is None:
-                source = gis.GIS()
-                search_query = 'accountid:{0} AND tags:"{1}"'.format(_solution_helpers.PORTAL_ID, 'one.click.solution')               
-                items = source.content.search(search_query, max_items=1000)
-                solutions = {}
-                tag_prefix = 'solution.'
-                for item in items:
-                    solution_name = next((tag[len(tag_prefix):] for tag in item.tags if tag.startswith('solution.')), None)
-                    if solution_name is None:
-                        continue
-                    if solution_name not in solutions:
-                        solutions[solution_name] = []
-                    solutions[solution_name].append(item.title)
-                self.params[1].filter.list = sorted([solution_name for solution_name in solutions])
-                self.params[5].value = json.dumps(solutions)
+        if not self.params[1].hasBeenValidated and self.params[1].value:
+            solutions_definition_file = os.path.join(self.params[1].valueAsText, 'SolutionDefinitions.json') 
+            if os.path.exists(solutions_definition_file):
+                with open(solutions_definition_file, 'r') as file:
+                    content = file.read() 
+                    definitions = json.loads(content)
+                    self.params[2].filter.list = sorted([solution_name for solution_name in definitions['Solutions']])
 
-                target = gis.GIS('pro')
-                folders = target.users.me.folders
-                self.params[4].filter.list = sorted([folder['title'] for folder in folders])
-                return
-
-            solutions = json.loads(self.params[5].valueAsText)        
-            solution_name = self.params[1].valueAsText
-            self.params[2].filter.list = sorted([map_app for map_app in solutions[solution_name]])
-            self.params[2].value = arcpy.ValueTable() # reset parameter value
+            target = gis.GIS('pro')
+            folders = target.users.me.folders
+            self.params[5].filter.list = sorted([folder['title'] for folder in folders])
+        
+        if not self.params[2].hasBeenValidated and self.params[2].value:
+            solutions_definition_file = os.path.join(self.params[1].valueAsText, 'SolutionDefinitions.json') 
+            if os.path.exists(solutions_definition_file):
+                solution_name = self.params[2].valueAsText
+                with open(solutions_definition_file, 'r') as file:
+                    content = file.read() 
+                    definitions = json.loads(content)
+                    if solution_name in definitions['Solutions']:
+                        self.params[3].filter.list = sorted(definitions['Solutions'][solution_name])
     
     def updateMessages(self):
         """Modify the messages created by internal validation for each tool
         parameter. This method is called after internal validation."""
-        self.params[4].clearMessage()
+        self.params[5].clearMessage()
