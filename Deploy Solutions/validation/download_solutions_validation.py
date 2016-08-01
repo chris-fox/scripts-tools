@@ -37,10 +37,10 @@ class ToolValidator(object):
         validation is performed. This method is called whenever a parameter
         has been changed."""
         if not self.params[1].hasBeenValidated:
-            if self.params[5].value is None:
-                source = gis.GIS()
-                search_query = 'accountid:{0} AND tags:"{1}"'.format(_solution_helpers.PORTAL_ID, 'one.click.solution')               
-                items = source.content.search(search_query, max_items=1000)
+            if self.params[4].value is None:
+                source = gis.GIS('pro')
+                search_query = 'tags:"{0}"'.format('one.click.solution')               
+                items = source.content.search(search_query, outside_org=True, max_items=1000)
                 solutions = {}
                 tag_prefix = 'solution.'
                 for item in items:
@@ -51,14 +51,10 @@ class ToolValidator(object):
                         solutions[solution_name] = []
                     solutions[solution_name].append(item.title)
                 self.params[1].filter.list = sorted([solution_name for solution_name in solutions])
-                self.params[5].value = json.dumps(solutions)
-
-                target = gis.GIS('pro')
-                folders = target.users.me.folders
-                self.params[4].filter.list = sorted([folder['title'] for folder in folders])
+                self.params[4].value = json.dumps(solutions)
                 return
 
-            solutions = json.loads(self.params[5].valueAsText)        
+            solutions = json.loads(self.params[4].valueAsText)        
             solution_name = self.params[1].valueAsText
             self.params[2].filter.list = sorted([map_app for map_app in solutions[solution_name]])
             self.params[2].value = arcpy.ValueTable() # reset parameter value
@@ -66,4 +62,5 @@ class ToolValidator(object):
     def updateMessages(self):
         """Modify the messages created by internal validation for each tool
         parameter. This method is called after internal validation."""
-        self.params[4].clearMessage()
+        return
+        

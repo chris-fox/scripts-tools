@@ -32,7 +32,7 @@ def set_validation_dict(validation_dict):
     global VALIDATION_DICT
     VALIDATION_DICT = validation_dict
 
-def url_request(url, request_parameters, referer, request_type='GET', repeat=0, raise_on_failure=True):
+def url_request(url, request_parameters, referer=None, request_type='GET', repeat=0, raise_on_failure=True):
     """Send a new request and format the json response.
     Keyword arguments:
     url - the url of the request
