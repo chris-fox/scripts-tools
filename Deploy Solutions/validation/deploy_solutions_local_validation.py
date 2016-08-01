@@ -42,7 +42,7 @@ class ToolValidator(object):
                 with open(solutions_definition_file, 'r') as file:
                     content = file.read() 
                     definitions = json.loads(content)
-                    self.params[2].filter.list = sorted([solution_name for solution_name in definitions['Solutions']])
+                    self.params[2].filter.list = sorted([solution_group for solution_group in definitions['Solution Groups']])
 
             target = gis.GIS('pro')
             folders = target.users.me.folders
@@ -51,12 +51,12 @@ class ToolValidator(object):
         if not self.params[2].hasBeenValidated and self.params[2].value:
             solutions_definition_file = os.path.join(self.params[1].valueAsText, 'SolutionDefinitions.json') 
             if os.path.exists(solutions_definition_file):
-                solution_name = self.params[2].valueAsText
+                solution_group = self.params[2].valueAsText
                 with open(solutions_definition_file, 'r') as file:
                     content = file.read() 
                     definitions = json.loads(content)
-                    if solution_name in definitions['Solutions']:
-                        self.params[3].filter.list = sorted(definitions['Solutions'][solution_name])
+                    if solution_group in definitions['Solution Groups']:
+                        self.params[3].filter.list = sorted(definitions['Solution Groups'][solution_group])
     
     def updateMessages(self):
         """Modify the messages created by internal validation for each tool
