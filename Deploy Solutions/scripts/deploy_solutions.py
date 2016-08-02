@@ -469,7 +469,7 @@ class WebMapItem(TextItem):
                             table['url'] = url_pattern.sub(service[1][1], table['url'])
 
             # Add the web map to the target portal
-            item_properties['text'] = json.dumps(self.data)
+            item_properties['text'] = json.dumps(webmap_json)
 
             with tempfile.TemporaryDirectory() as temp_dir: 
                 thumbnail = self.thumbnail
