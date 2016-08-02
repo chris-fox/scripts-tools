@@ -316,7 +316,7 @@ class FeatureServiceItem(TextItem):
 
     @property
     def service_definition(self):
-        return self._service_definition
+        return copy.deepcopy(self._service_definition)
 
     @service_definition.setter
     def service_definition(self, value):
@@ -324,7 +324,7 @@ class FeatureServiceItem(TextItem):
 
     @property
     def layers_definition(self):
-        return self._layers_definition
+        return copy.deepcopy(self._layers_definition)
 
     @layers_definition.setter
     def layers_definition(self, value):
