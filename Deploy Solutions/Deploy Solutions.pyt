@@ -886,12 +886,8 @@ class Group(object):
                 i += 1
                 title = "{0} {1}".format(original_group['title'], i)
         
-            thumbnail = self.thumbnail
-            if not thumbnail and self.portal_group:
-                thumbnail = self.portal_group.get_thumbnail_link()
-
             new_group = target.groups.create(title, tags, original_group['description'], original_group['snippet'],
-                                             'private', thumbnail, True, original_group['sortField'], original_group['sortOrder'], True)
+                                             'private', self.thumbnail, True, original_group['sortField'], original_group['sortOrder'], True)
             return new_group
         except Exception as e:
             raise ItemCreateException("Failed to create group '{0}': {1}".format(original_group['title'], str(e)), new_group)
@@ -995,10 +991,7 @@ class Item(object):
                 if not data and self.portal_item:
                     data = self.portal_item.download(temp_dir)
                  
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=thumbnail, folder=folder['title'])
+                new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=self.thumbnail, folder=folder['title'])
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1055,17 +1048,8 @@ class TextItem(Item):
             item_properties = self._get_item_properties()
             item_properties['extent'] = extent['wgs84']
             item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
-            
-            data = self.data
-            if not data and self.portal_item:
-                data = self.portal_item.get_data()
-            item_properties['text'] = json.dumps(data)
-
-            with tempfile.TemporaryDirectory() as temp_dir:                 
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
+            item_properties['text'] = self.data
+            new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1184,11 +1168,7 @@ class FeatureServiceItem(TextItem):
             item_properties['extent'] = extent['wgs84']
             item_properties['text'] = self.data
 
-            with tempfile.TemporaryDirectory() as temp_dir: 
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item.update(item_properties=item_properties, thumbnail=thumbnail)
+            new_item.update(item_properties=item_properties, thumbnail=self.thumbnail)
     
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1258,12 +1238,7 @@ class WebMapItem(TextItem):
 
             # Add the web map to the target portal
             item_properties['text'] = json.dumps(webmap_json)
-
-            with tempfile.TemporaryDirectory() as temp_dir: 
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
+            new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1334,11 +1309,7 @@ class ApplicationItem(TextItem):
                 item_properties['text'] = json.dumps(app_json)
 
             # Add the application to the target portal
-            with tempfile.TemporaryDirectory() as temp_dir: 
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
+            new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
 
             # Update the url of the item to point to the new portal and new id of the application
             if original_item['url']:
@@ -1403,7 +1374,7 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
         solution_definition.append(ApplicationItem(solution_item, data=app_json, sharing={
 				"access": "private",
 				"groups": groups
-					}, portal_item=solution_item))
+					}, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
    
         webmap_id = None
         if solution_item['type'].lower() == "operation view": #Operations Dashboard
@@ -1425,7 +1396,8 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                     group = next((g for g in solution_definition if g.info['id'] == group_id), None)
                     if not group:
                         group = source.groups.get(group_id)
-                        solution_definition.append(Group(group, portal_group=group))
+                        id = group.id
+                        solution_definition.append(Group(group, thumbnail=group.get_thumbnail_link(), portal_group=group))
                     
                     search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
                     group_items = source.content.search(search_query, max_items=100, outside_org=True)
@@ -1445,7 +1417,7 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
         solution_definition.append(WebMapItem(solution_item, data=webmap_json, sharing={
 				"access": "private",
 				"groups": groups
-					}, portal_item=solution_item))
+					}, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
         
         if 'operationalLayers' in webmap_json:
             for layer in webmap_json['operationalLayers']:
@@ -1476,10 +1448,10 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
             layers_definition['tables'].append(table.properties)
         data = solution_item.get_data()     
         
-        solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, data, {
+        solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, data=data, sharing= {
 				    "access": "private",
 				    "groups": groups
-					    }, portal_item=solution_item))
+					    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
 
     # All other item types
     else:
@@ -1488,12 +1460,12 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
             solution_definition.append(TextItem(solution_item, data=solution_item.get_data(), sharing={
 			"access": "private",
 			"groups": groups
-			    }, portal_item=solution_item))
+			    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
         else:
             solution_definition.append(Item(solution_item, data=None, sharing={
 			"access": "private",
 			"groups": groups
-			    }, portal_item=solution_item))
+			    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
 
 def _get_solution_definition_local(source_directory, solution, solution_definition):
     """Get the definition of the solution. This may be made up of multiple items and groups.
