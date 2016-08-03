@@ -15,14 +15,840 @@
  | limitations under the License.
  ------------------------------------------------------------------------------
  """
-import json, uuid, re, tempfile, os, _solution_helpers, copy
+import json, uuid, re, tempfile, os, copy, io, gzip, webbrowser
 from arcgis import gis, lyr
+from urllib.request import urlopen as urlopen
+from urllib.request import Request as request
+from urllib.parse import urlencode as encode
+from urllib.parse import urlparse as parse
 
+PORTAL_ID = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
 IS_RUN_FROM_PRO = False
 TAG = 'one.click.solution'
 TEXT_BASED_ITEM_TYPES = ['Web Map', 'Feature Service', 'Map Service', 'Operation View',
                                    'Image Service', 'Feature Collection', 'Feature Collection Template',
                                    'Web Mapping Application', 'Mobile Application', 'Symbol Set', 'Color Set']
+
+#region Toolbox and Tools
+
+class Toolbox(object):
+    def __init__(self):
+        """Define the toolbox (the name of the toolbox is the name of the
+        .pyt file)."""
+        self.label = "Deploy Solutions"
+        self.alias = "solutions"
+
+        # List of tool classes associated with this toolbox
+        self.tools = [DeploySolutionsTool, DeploySolutionsLocalTool, DownloadSolutionsTool, 
+                      UpdateDomainTool, AlterFieldAliasTool, OpenWebMap]
+
+class DeploySolutionsTool(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Deploy Solutions"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        param0 = arcpy.Parameter(
+            displayName="Solution Group",
+            name="solution_group",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param1 = arcpy.Parameter(
+            displayName="Solutions",
+            name="solutions",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input",
+            multiValue=True)
+
+        param2 = arcpy.Parameter(
+            displayName="Extent",
+            name="extent",
+            datatype="GPExtent",
+            parameterType="Optional",
+            direction="Input")
+
+        param3 = arcpy.Parameter(
+            displayName="Folder",
+            name="folder",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param4 = arcpy.Parameter(
+            displayName="Validation JSON",
+            name="validation_json",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        params = [param0, param1, param2, param3, param4]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if not parameters[0].hasBeenValidated:
+            if not parameters[4].value:
+                source = gis.GIS()
+                search_query = 'accountid:{0} AND tags:"{1}"'.format(PORTAL_ID, TAG)               
+                items = source.content.search(search_query, max_items=1000)
+                solutions = {}
+                tag_prefix = 'solution.'
+                for item in items:
+                    solution_name = next((tag[len(tag_prefix):] for tag in item.tags if tag.startswith('solution.')), None)
+                    if solution_name is None:
+                        continue
+                    if solution_name not in solutions:
+                        solutions[solution_name] = []
+                    solutions[solution_name].append(item.title)
+                parameters[0].filter.list = sorted([solution_name for solution_name in solutions])
+
+                target = gis.GIS('pro')
+                folders = target.users.me.folders
+                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+                validation_json =  { 'solutions' : solutions, 'folders' : folders }
+                parameters[4].value = json.dumps(validation_json)
+
+            if parameters[0].value:
+                validation_json = json.loads(parameters[4].valueAsText)  
+                solutions = validation_json['solutions']   
+                solution_name = parameters[0].valueAsText
+                parameters[1].filter.list = sorted([map_app for map_app in solutions[solution_name]])
+                parameters[1].value = arcpy.ValueTable()
+
+        if not parameters[3].hasBeenValidated:
+            validation_json = json.loads(parameters[4].valueAsText)  
+            folders = validation_json['folders']
+            if parameters[3].value:
+                parameters[3].filter.list = sorted(set([parameters[3].valueAsText] + [folder['title'] for folder in folders]))
+            else:
+                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        connection = None
+        try:
+            # Specify that we are running within Pro
+            # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
+            global IS_RUN_FROM_PRO
+            IS_RUN_FROM_PRO = True
+            import arcpy
+
+            # Setup the target portal using the active portal within Pro
+            target = gis.GIS('pro')
+            token = arcpy.GetSigninToken()
+            connection = {'target' : target, 'url' : arcpy.GetActivePortalURL(), 
+                          'username' : target.users.me.username, 
+                          'token' : token['token'], 'referer' : token['referer'], 'local' : False }
+        except Except:
+            arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
+
+        if connection:             
+            # Get the input parameters for creating from local items on disk
+            solution_group = parameters[0].valueAsText
+            value_table = parameters[1].value
+            solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
+            solutions = sorted(list(set(solutions)))
+            extent_text = _get_extent_text(parameters[2].value)
+            output_folder = parameters[3].valueAsText
+            parameters[4].value = ''
+
+            # Clone the solutions
+            _create_solutions(connection, solution_group, solutions, extent_text, output_folder)
+            return
+
+class DeploySolutionsLocalTool(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Deploy Solutions (Local)"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        param0 = arcpy.Parameter(
+            displayName="Items Folder",
+            name="items_folder",
+            datatype="DEFolder",
+            parameterType="Required",
+            direction="Input")
+
+        param1 = arcpy.Parameter(
+            displayName="Solution Group",
+            name="solution_group",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param2 = arcpy.Parameter(
+            displayName="Solutions",
+            name="solutions",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input",
+            multiValue=True)
+
+        param3 = arcpy.Parameter(
+            displayName="Extent",
+            name="extent",
+            datatype="GPExtent",
+            parameterType="Optional",
+            direction="Input")
+
+        param4 = arcpy.Parameter(
+            displayName="Folder",
+            name="folder",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param5 = arcpy.Parameter(
+            displayName="Validation JSON",
+            name="validation_json",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        params = [param0, param1, param2, param3, param4, param5]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if not parameters[0].hasBeenValidated:
+            if parameters[0].value:
+                solutions_definition_file = os.path.join(parameters[0].valueAsText, 'SolutionDefinitions.json') 
+                if os.path.exists(solutions_definition_file):
+                    with open(solutions_definition_file, 'r') as file:
+                        content = file.read() 
+                        definitions = json.loads(content)
+                        parameters[1].filter.list = sorted([solution_group for solution_group in definitions['Solution Groups']])
+
+            if not parameters[4].value:
+                target = gis.GIS('pro')
+                folders = target.users.me.folders
+                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+                validation_json = { 'folders' : folders }
+                parameters[5].value = json.dumps(validation_json)
+        
+        if not parameters[1].hasBeenValidated and parameters[1].value:
+            solutions_definition_file = os.path.join(parameters[0].valueAsText, 'SolutionDefinitions.json') 
+            if os.path.exists(solutions_definition_file):
+                solution_group = parameters[1].valueAsText
+                with open(solutions_definition_file, 'r') as file:
+                    content = file.read() 
+                    definitions = json.loads(content)
+                    if solution_group in definitions['Solution Groups']:
+                        parameters[2].filter.list = sorted(definitions['Solution Groups'][solution_group])
+
+        if not parameters[4].hasBeenValidated:
+            validation_json = json.loads(parameters[5].valueAsText)  
+            folders = validation_json['folders']
+            if parameters[4].value:
+                parameters[4].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
+            else:
+                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""        
+        return
+
+    def execute(self, parameters, messages):
+        connection = None
+        try:
+            # Specify that we are running within Pro
+            # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
+            global IS_RUN_FROM_PRO
+            IS_RUN_FROM_PRO = True
+            import arcpy
+
+            # Setup the target portal using the active portal within Pro
+            target = gis.GIS('pro')
+            token = arcpy.GetSigninToken()
+            connection = {'target' : target, 'url' : arcpy.GetActivePortalURL(), 
+                          'username' : target.users.me.username, 
+                          'token' : token['token'], 'referer' : token['referer'], 'local' : True }
+        except Except:
+            arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
+
+        if connection:
+            connection['source directory'] = parameters[0].valueAsText
+            solution_group = parameters[1].valueAsText
+            value_table = parameters[2].value
+            solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
+            solutions = sorted(list(set(solutions)))
+            extent_text = _get_extent_text(parameters[2].value)
+            output_folder = parameters[4].valueAsText
+            parameters[5].value = ''
+                            
+            # Clone the solutions
+            _create_solutions(connection, solution_group, solutions, extent_text, output_folder)
+            return
+
+class DownloadSolutionsTool(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Download Solutions"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        param0 = arcpy.Parameter(
+            displayName="Solution Group",
+            name="solution_group",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param1 = arcpy.Parameter(
+            displayName="Solutions",
+            name="solutions",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input",
+            multiValue=True)
+
+        param2 = arcpy.Parameter(
+            displayName="Output Directory",
+            name="output_directory",
+            datatype="DEFolder",
+            parameterType="Required",
+            direction="Input")
+
+        param3 = arcpy.Parameter(
+            displayName="Validation JSON",
+            name="validation_json",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        params = [param0, param1, param2, param3]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if not parameters[0].hasBeenValidated:
+            if parameters[3].value is None:
+                source = gis.GIS()
+                search_query = 'accountid:{0} AND tags:"{1}"'.format(PORTAL_ID, TAG)               
+                items = source.content.search(search_query, max_items=1000)
+                solutions = {}
+                tag_prefix = 'solution.'
+                for item in items:
+                    solution_name = next((tag[len(tag_prefix):] for tag in item.tags if tag.startswith('solution.')), None)
+                    if solution_name is None:
+                        continue
+                    if solution_name not in solutions:
+                        solutions[solution_name] = []
+                    solutions[solution_name].append(item.title)
+                parameters[0].filter.list = sorted([solution_name for solution_name in solutions])
+                parameters[3].value = json.dumps(solutions)
+
+            if parameters[0].value:
+                solutions = json.loads(parameters[3].valueAsText)     
+                solution_name = parameters[0].valueAsText
+                parameters[1].filter.list = sorted([map_app for map_app in solutions[solution_name]])
+                parameters[1].value = arcpy.ValueTable()
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        connection = None
+        try:
+            # Specify that we are running within Pro
+            # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
+            global IS_RUN_FROM_PRO
+            IS_RUN_FROM_PRO = True
+            import arcpy
+
+            # Setup the target portal using the active portal within Pro
+            target = gis.GIS('pro')
+            token = arcpy.GetSigninToken()
+            connection = {'target' : target, 'url' : arcpy.GetActivePortalURL(), 
+                          'username' : target.users.me.username, 
+                          'token' : token['token'], 'referer' : token['referer'], 'local' : False }
+        except Except:
+            arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
+
+        if connection:             
+            # Download the items
+            solution_group = parameters[0].valueAsText
+            value_table = parameters[1].value
+            solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
+            solutions = sorted(list(set(solutions)))
+            output_directory = parameters[2].valueAsText
+            parameters[3].value = ''
+            _download_solutions(connection, solution_group, solutions, output_directory)
+            return
+
+class UpdateDomainTool(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Update Domains"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        param0 = arcpy.Parameter(
+            displayName="Input Layer or Table",
+            name="input_table",
+            datatype="GPTableView",
+            parameterType="Required",
+            direction="Input")
+
+        param1 = arcpy.Parameter(
+            displayName="Field",
+            name="field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input")
+        param1.filter.list = ['Short', 'Long', 'Float', 'Double', 'Text']
+        param1.parameterDependencies = [param0.name]
+
+        param2 = arcpy.Parameter(
+            displayName="Type",
+            name="type",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+        param2.filter.list = ['None', 'Coded Value', 'Range']
+
+        param3 = arcpy.Parameter(
+            displayName="Name",
+            name="name",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+            enabled=False)
+
+        param4 = arcpy.Parameter(
+            displayName="Domain",
+            name="domain",
+            datatype="GPValueTable",
+            parameterType="Optional",
+            direction="Input",
+            enabled=False)
+        param4.columns = [['GPString', 'Code'], ['GPString', 'Value']]
+
+        param5 = arcpy.Parameter(
+            displayName="Min",
+            name="min",
+            datatype="GPDouble",
+            parameterType="Optional",
+            direction="Input",
+            enabled=False)
+
+        param6 = arcpy.Parameter(
+            displayName="Max",
+            name="max",
+            datatype="GPDouble",
+            parameterType="Optional",
+            direction="Input",
+            enabled=False)
+
+        param7 = arcpy.Parameter(
+            displayName="Validation JSON",
+            name="validation_json",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        params = [param0, param1, param2, param3, param4, param5, param6, param7]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if not parameters[0].hasBeenValidated:
+            parameters[7].value = _get_fields(parameters[0])
+            parameters[1].value = None
+            parameters[2].value = None
+            parameters[3].enabled = False
+            parameters[3].value = None
+            parameters[4].enabled = False
+            parameters[4].value = None
+            parameters[5].enabled = False
+            parameters[5].value = None
+            parameters[6].enabled = False
+            parameters[6].value = None
+
+        if not parameters[1].hasBeenValidated and parameters[0].altered and parameters[7].valueAsText not in ["Failed to connect", "Invalid url"]:
+            fields = json.loads(parameters[7].valueAsText)
+            field = next((i for i in fields if i['name'] == parameters[1].valueAsText), None)
+            if field is not None:
+                if field['type'] == 'esriFieldTypeString':
+                    parameters[2].filter.list = ['None', 'Coded Value']
+                else:
+                    parameters[2].filter.list = ['None', 'Coded Value', 'Range']
+
+                if field['domain'] is not None:
+                    parameters[3].value = field['domain']['name']
+                    parameters[3].enabled = True
+                    if 'codedValues' in field['domain']:
+                        parameters[2].value = 'Coded Value'
+                        coded_values = []
+                        for value in field['domain']['codedValues']:
+                            coded_values.append([value['code'],value['name']])
+                        parameters[4].value = coded_values
+                        parameters[4].enabled = True
+                        parameters[5].enabled = False
+                        parameters[6].enabled = False
+                        parameters[5].value = None
+                        parameters[6].value = None
+                    else:
+                        parameters[2].value = 'Range'
+                        parameters[5].value = field['domain']['range'][0]
+                        parameters[6].value = field['domain']['range'][1]
+                        parameters[5].enabled = True
+                        parameters[6].enabled = True
+                        parameters[4].enabled = False
+                        parameters[4].value = []                   
+                else:
+                    parameters[3].enabled = False
+                    parameters[4].enabled = False
+                    parameters[5].enabled = False
+                    parameters[6].enabled = False
+                    parameters[2].value = 'None'
+                    parameters[3].value = None
+                    parameters[4].value = []
+                    parameters[5].value = None
+                    parameters[6].value = None
+                                
+        elif not parameters[2].hasBeenValidated:
+            if parameters[2].value == 'None':
+                parameters[3].enabled = False
+                parameters[4].enabled = False
+                parameters[5].enabled = False
+                parameters[6].enabled = False
+            elif parameters[2].value == 'Coded Value':
+                parameters[3].enabled = True 
+                parameters[4].enabled = True
+                parameters[5].enabled = False
+                parameters[6].enabled = False
+            elif parameters[2].value == 'Range':
+                parameters[3].enabled = True  
+                parameters[4].enabled = False
+                parameters[5].enabled = True
+                parameters[6].enabled = True
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        if parameters[7].valueAsText == "Invalid URL":
+            parameters[0].setErrorMessage("Input layer or table is not a hosted feature service")
+        elif parameters[7].valueAsText == "Failed To Connect":
+            parameters[0].setErrorMessage("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
+        else:
+            parameters[0].clearMessage()
+        return
+
+    def execute(self, parameters, messages):
+        field = arcpy.ListFields(parameters[0].valueAsText, parameters[1].valueAsText)[0]
+        type = parameters[2].valueAsText
+        name = parameters[3].valueAsText
+        coded_values = parameters[4].value
+        min = parameters[5].valueAsText
+        max = parameters[6].valueAsText
+        domain = None
+        parameters[7].value = ''
+
+        has_error = False
+        if type == 'Coded Value':
+            if len(coded_values) > 0:
+                domain = {'type' : 'codedValue', 'name' : name, 'codedValues' : []}
+                for row in coded_values:
+                    code = row[0]
+                    value = row[1]
+            
+                    if code == '' or value == '':
+                       arcpy.AddError("Code and Value cannot be null")
+                       has_error = True
+                    elif field.type == 'SmallInteger' or field.type == 'Integer':
+                        try:
+                            code = int(code)
+                        except ValueError:
+                            arcpy.AddError("{0} is an invalid code for an integer field".format(code))
+                            has_error = True
+                    elif field.type == 'Single' or field.type == 'Double':
+                        try:
+                            code = float(code)
+                        except ValueError:
+                            arcpy.AddError("{0} is an invalid code for an floating point field".format(code))
+                            has_error = True
+
+                    domain['codedValues'].append({'code' : code, 'name' : value})
+        
+            if has_error:
+                return
+    
+        elif type == 'Range':
+            range_values = []
+            if min == '' or max == '':
+                arcpy.AddError("Min and Max cannot be null")
+                has_error = True
+            elif min == max:
+                arcpy.AddError("Min and Max cannot be equal")
+                has_error = True
+            else:
+                for val in [min, max]:
+                    if field.type == 'SmallInteger' or field.type == 'Integer':
+                        try:
+                            val = int(val)
+                        except ValueError:
+                            arcpy.AddError("{0} is an invalid range value for an integer field".format(val))
+                            has_error = True
+                    if field.type == 'Single' or field.type == 'Double':
+                        try:
+                            val = float(val)
+                        except ValueError:
+                            arcpy.AddError("{0} is an invalid range value for an floating point field".format(val))
+                            has_error = True
+                    range_values.append(val)
+
+            if has_error:
+                return
+
+            if range_values[0] > range_values[1]:
+                range_values.insert(0, range_values[1])
+                range_values.pop()
+        
+            domain = {'type': 'range', 'name' : name, 'range' : range_values}
+    
+        try:
+            admin_url = _get_admin_url(parameters[0])
+            if admin_url == "Invalid URL":
+                raise Exception("Input layer or table is not a hosted feature service")
+            elif admin_url == "Failed To Connect":
+                raise Exception("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
+            token = arcpy.GetSigninToken()
+            request_parameters = {'f' : 'json', 'token' : token['token'], 'async' : False}
+            update_defintion = {'fields' : [{'name' : field.name, 'domain' : domain}]}
+            request_parameters['updateDefinition'] = json.dumps(update_defintion)
+            resp = _url_request(admin_url + "/updateDefinition", request_parameters, token['referer'], request_type='POST')
+        except Exception as e:
+            arcpy.AddError("Failed to update domain: {0}".format(str(e)))
+
+class AlterFieldAliasTool(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Alter Field Alias"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        param0 = arcpy.Parameter(
+            displayName="Input Layer or Table",
+            name="input_table",
+            datatype="GPTableView",
+            parameterType="Required",
+            direction="Input")
+
+        param1 = arcpy.Parameter(
+            displayName="Field",
+            name="field",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param2 = arcpy.Parameter(
+            displayName="Alias",
+            name="type",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param3 = arcpy.Parameter(
+            displayName="Validation JSON",
+            name="validation_json",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        params = [param0, param1, param2, param3]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if not parameters[0].hasBeenValidated:
+            parameters[3].value = _get_fields(parameters[0])
+            fields = json.loads(parameters[3].valueAsText)
+            parameters[1].filter.list = [field['name'] for field in fields]
+            parameters[1].value = None
+            parameters[2].value = None
+
+        if not parameters[1].hasBeenValidated and parameters[0].altered and parameters[3].valueAsText not in ["Failed to connect", "Invalid url"]:
+            fields = json.loads(parameters[3].valueAsText)
+            field = next((i for i in fields if i['name'] == parameters[1].valueAsText), None)
+            if field is not None:
+                parameters[2].value = field['alias']
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        if parameters[3].valueAsText == "Invalid URL":
+            parameters[0].setErrorMessage("Input layer or table is not a hosted feature service")
+        elif parameters[3].valueAsText == "Failed To Connect":
+            parameters[0].setErrorMessage("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
+        else:
+            parameters[0].clearMessage()
+        return
+
+    def execute(self, parameters, messages):
+        field = arcpy.ListFields(parameters[0].valueAsText, parameters[1].valueAsText)[0]
+        alias = parameters[2].valueAsText
+        parameters[3].value = ''
+    
+        try:
+            admin_url = _get_admin_url(parameters[0])
+            if admin_url == "Invalid URL":
+                raise Exception("Input layer or table is not a hosted feature service")
+            elif admin_url == "Failed To Connect":
+                raise Exception("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
+            token = arcpy.GetSigninToken()
+            request_parameters = {'f' : 'json', 'token' : token['token'], 'async' : False}
+            update_defintion = {'fields' : [{'name' : field.name, 'alias' : alias}]}
+            request_parameters['updateDefinition'] = json.dumps(update_defintion)
+            resp = _url_request(admin_url + "/updateDefinition", request_parameters, token['referer'], request_type='POST')
+        except Exception as e:
+            arcpy.AddError("Failed to alter alias: {0}".format(str(e)))
+
+class OpenWebMap(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Open Web Map"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        param0 = arcpy.Parameter(
+            displayName="Folder",
+            name="folder",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param1 = arcpy.Parameter(
+            displayName="Web Map",
+            name="web_map",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param2 = arcpy.Parameter(
+            displayName="URL",
+            name="url",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        param3 = arcpy.Parameter(
+            displayName="Validation JSON",
+            name="validation_json",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        params = [param0, param1, param2, param3]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if not parameters[0].hasBeenValidated:
+            if not parameters[3].value:
+                target = gis.GIS('pro')
+                current_user = target.users.me    
+                folders = current_user.folders  
+                username = current_user.username     
+                validation_json = { 'folders' : folders, 'username' : username }
+                folders = sorted([folder['title'] for folder in folders])
+                folders.insert(0, username)
+                parameters[0].filter.list = folders
+                parameters[3].value = json.dumps(validation_json)
+
+        if not parameters[0].hasBeenValidated and parameters[0].value is not None:
+            validation_json= json.loads(parameters[3].valueAsText)
+            target = gis.GIS('pro')
+            folder = parameters[0].valueAsText
+            if folder == validation_json['username']:
+                folder = None
+            items = [item for item in target.users.me.items(folder) if item.type.lower() == "web map"] 
+            validation_json['items'] = items
+            parameters[3].value = json.dumps(validation_json)
+            parameters[1].value = None
+            parameters[1].filter.list = sorted([item.title for item in items])          
+
+        if not parameters[1].hasBeenValidated and parameters[1].value is not None and parameters[0].value is not None:
+            validation_json = json.loads(parameters[3].valueAsText)
+            items = validation_json['items']
+            webmap = next((item for item in items if item['title'] == parameters[1].valueAsText), None)
+            if webmap is None:
+                return
+            url = "{0}home/webmap/viewer.html?webmap={1}".format(arcpy.GetActivePortalURL(), webmap['id'])
+            parameters[2].value = url
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            url = parameters[2].valueAsText
+            webbrowser.open(url)
+            parameters[3].value = ''
+        except Exception as e:
+            arcpy.AddError("Failed to open url: {0}".format(str(e)))
+
+#endregion
+
+#region Solution Deployment and Download
+
 class Group(object):
     """
     Represents the definition of a group within ArcGIS Online or Portal.
@@ -356,7 +1182,7 @@ class FeatureServiceItem(TextItem):
             url += 'createService'
             request_parameters = {'f' : 'json', 'createParameters' : json.dumps(service_definition), 
                                   'outputType' : 'featureService', 'token' : connection['token']}
-            resp =_solution_helpers.url_request(url, request_parameters, connection['referer'], 'POST')
+            resp = _url_request(url, request_parameters, connection['referer'], 'POST')
             new_item = target.content.get(resp['itemId'])        
     
             # Get the layer and table definitions from the original service
@@ -384,14 +1210,14 @@ class FeatureServiceItem(TextItem):
             index = new_fs_url.find(find_string)
             admin_url = '{0}/rest/admin/services{1}/addToDefinition'.format(new_fs_url[:index], new_fs_url[index + len(find_string):])
             request_parameters = {'f' : 'json', 'addToDefinition' : definition, 'token' : connection['token']}
-            _solution_helpers.url_request(admin_url, request_parameters, connection['referer'], 'POST')
+            _url_request(admin_url, request_parameters, connection['referer'], 'POST')
 
             # Add any releationship defintions back to the layers and tables
             for id in relationships:
                 relationships_param = {'relationships' : relationships[id]}
                 request_parameters = {'f' : 'json', 'addToDefinition' : json.dumps(relationships_param), 'token' : connection['token']}
                 admin_url = '{0}/rest/admin/services{1}/{2}/addToDefinition'.format(new_fs_url[:index], new_fs_url[index + len(find_string):], id)
-                _solution_helpers.url_request(admin_url, request_parameters, connection['referer'], 'POST')
+                _url_request(admin_url, request_parameters, connection['referer'], 'POST')
 
             # Update the item definition of the service
             item_properties = self._get_item_properties(extent)
@@ -676,8 +1502,8 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
     elif solution_item['type'] == 'Feature Service':
         url = solution_item['url']
         request_parameters = {'f' : 'json'}
-        service_definition = _solution_helpers.url_request(url, request_parameters)
-        layers_defintion = _solution_helpers.url_request(url + '/layers', request_parameters)
+        service_definition = _url_request(url, request_parameters)
+        layers_defintion = _url_request(url + '/layers', request_parameters)
         data = solution_item.get_data()
         solution_definition.append(FeatureServiceItem(solution_item, service_definition, layers_defintion, data, {
 				    "access": "private",
@@ -937,16 +1763,16 @@ def _create_solutions(connection, solution_group, solutions, extent, output_fold
     folder_items = current_user.items(folder['title'])
 
     for solution in solutions:
-        try:
+        try:          
             created_items = []
-            solution_definition = []
+            solution_definition = []           
 
             if connection['local']:
                 # Get the definitions of the items and groups that make up the solution
                 _get_solution_definition_local(source_directory, solution, solution_definition)
             else:
                 # Search for the map or app in the given organization using the map or app name and a specific tag
-                search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(_solution_helpers.PORTAL_ID, TAG, solution_group, solution)
+                search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(PORTAL_ID, TAG, solution_group, solution)
                 items = source.content.search(search_query)
                 solution_item = next((item for item in items if item.title == solution), None)
                 if not solution_item:
@@ -1076,116 +1902,129 @@ def _create_solutions(connection, solution_group, solutions, extent, output_fold
             _add_message('Failed to add {0}'.format(solution), 'Error')
             _add_message('------------------------')
 
-def download_solutions(portal_url, username, pw, solution_group, solutions, output_directory):
-    """Download solutions from a portal to a local directory
+#endregion
+
+#region Tools and Validation Helpers
+
+def _url_request(url, request_parameters, referer=None, request_type='GET', repeat=0, raise_on_failure=True):
+    """Send a new request and format the json response.
     Keyword arguments:
-    portal_url - URL of the portal containing the solutions to download
-    username - Username of the user to connect to the portal
-    pw - Password of the user used to connect to the portal
-    solution_group - The name of the group of solutions
-    solutions - A list of solutions to be cloned into the portal
-    output_directory - The directory to write the solution items and the definition configuration file""" 
-    
-    target = gis.GIS(portal_url, username, pw)
-    connection = {'target' : target, 'url' : portal_url, 
-                'username' : username, 
-                'token' : target._portal.con.token, 
-                'referer' : target._portal.con._referer }
-    IS_RUN_FROM_PRO = False
-    _download_solutions(connection, solution_group, solutions, output_directory)
+    url - the url of the request
+    request_parameters - a dictionay containing the name of the parameter and its correspoinsding value
+    request_type - the type of request: 'GET', 'POST'
+    repeat - the nuber of times to repeat the request in the case of a failure
+    error_text - the message to log if an error is returned
+    raise_on_failure - indicates if an exception should be raised if an error is returned and repeat is 0"""
+    if request_type == 'GET':
+        req = request('?'.join((url, encode(request_parameters))))
+    else:
+        headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',}
+        req = request(url, encode(request_parameters).encode('UTF-8'), headers)
 
-def create_solutions(portal_url, username, pw, solution_group, solutions, extent, output_folder, items_directory=None):
-    """Clone solutions into a new portal
-    Keyword arguments:
-    portal_url - URL of the portal to clone the solutions to
-    username - Username of the user used to create new items
-    pw - Password of the user used to create new items
-    solution_group - The name of the group of solutions
-    solutions - A list of solutions to be cloned into the portal
-    extent - The default extent of the new maps and services in WGS84
-    output_folder - The name of the folder to create the new items within the user's content
-    items_directory - Optional path to local location on disk of the solutions. If not specified the items are searched for in ArcGIS Online""" 
-    
-    target = gis.GIS(portal_url, username, pw)
-    connection = {'target' : target, 'url' : portal_url, 
-                'username' : username, 
-                'token' : target._portal.con.token, 
-                'referer' : target._portal.con._referer,
-                'local' : False }
-    if items_directory:
-        connection['local'] = True
-        connection['source directory'] = items_directory
-    
-    IS_RUN_FROM_PRO = False
-    _create_solutions(connection, solution_group, solutions, extent, output_folder)
+    req.add_header('Accept-encoding', 'gzip')
+    if referer is not None:
+        req.add_header('Referer', referer)
 
-if __name__ == "__main__":            
-    connection = None
-    try:
-        # Specify that we are running within Pro
-        # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
-        IS_RUN_FROM_PRO = True
-        import arcpy
+    response = urlopen(req)
 
-        # Setup the target portal using the active portal within Pro
-        target = gis.GIS('pro')
+    if response.info().get('Content-Encoding') == 'gzip':
+        buf = io.BytesIO(response.read())
+        with gzip.GzipFile(fileobj=buf) as gzip_file:
+            response_bytes = gzip_file.read()
+    else:
+        response_bytes = response.read()
+
+    response_text = response_bytes.decode('UTF-8')
+    response_json = json.loads(response_text)
+
+    if "error" in response_json:
+        if repeat == 0:
+            if raise_on_failure:
+                raise Exception(response_json)
+            return response_json
+
+        repeat -= 1
+        time.sleep(2)
+        response_json = self._url_request(
+            url, request_parameters, referer, request_type, repeat, raise_on_failure)
+
+    return response_json
+
+def _get_fields(parameter):
+    import arcpy
+    admin_url = _get_admin_url(parameter)
+    if admin_url in ["Invalid URL", "Failed To Connect"]:
+        return admin_url
+
+    try:      
         token = arcpy.GetSigninToken()
-        connection = {'target' : target, 'url' : arcpy.GetActivePortalURL(), 
-                      'username' : target.users.me.username, 
-                      'token' : token['token'], 'referer' : token['referer'] }
-    except Except:
-        arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
+        request_parameters = {'f' : 'json', 'token' : token['token'] }
+        resp = _url_request(admin_url, request_parameters, token['referer'])
+        
+        if "serviceItemId" not in resp:
+            return "Failed To Connect"
 
-    if connection:
-        mode = arcpy.GetParameterAsText(0)
+        return json.dumps(resp['fields'])
+    except:
+        return "Failed To Connect"
 
-        # Get flag of whether we are downloading solutions or creating new solutions
-        if mode == 'DOWNLOAD':
-            solution_group = arcpy.GetParameterAsText(1)
-            solutions = sorted(list(set(arcpy.GetParameter(2)))) 
-            output_directory = arcpy.GetParameterAsText(3)
-            arcpy.SetParameterAsText(4, '')
-            _download_solutions(connection, solution_group, solutions, output_directory)
+def _get_admin_url(parameter):
+    import arcpy
+    url = None
+    input = parameter.value
+    if type(input) == arcpy._mp.Layer: # Layer in the map
+        connection_props = input.connectionProperties
+        if connection_props['workspace_factory'] == 'FeatureService':
+            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
+    else:
+        input = parameter.valueAsText 
+        pieces = parse(input)
+        if pieces.scheme in ['http', 'https']: # URL
+            url = input
+        else: # Table in the map
+            prj = arcpy.mp.ArcGISProject('Current')
+            for map in prj.listMaps():
+                for table in map.listTables():
+                    if table.name == input:
+                        connection_props = table.connectionProperties
+                        if connection_props['workspace_factory'] == 'FeatureService':
+                            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
+    if url is None:
+        return "Invalid URL"
 
-        else:
-            if mode == 'CREATE':
-                # Get the input parameters for creating from arcgis online items
-                local_definitions = None
-                solution_group = arcpy.GetParameterAsText(1)
-                solutions = sorted(list(set(arcpy.GetParameter(2)))) 
-                extent = arcpy.GetParameter(3)
-                output_folder = arcpy.GetParameterAsText(4)
-                arcpy.SetParameterAsText(5, '')
-                connection['local'] = False
-            else:
-                # Get the input parameters for creating from local items on disk
-                solution_group = arcpy.GetParameterAsText(2)
-                solutions = sorted(list(set(arcpy.GetParameter(3)))) 
-                extent = arcpy.GetParameter(4)
-                output_folder = arcpy.GetParameterAsText(5)
-                connection['local'] = True
-                connection['source directory'] = arcpy.GetParameterAsText(1)
+    try:      
+        find_string = "/rest/services"
+        index = url.find(find_string)
+        if index == -1:
+            return "Invalid URL"
+        
+        return '{0}/rest/admin/services{1}'.format(url[:index], url[index + len(find_string):])
+    except:
+        return "Failed To Connect"
 
-            # Get the default extent of new maps defined in the portal
-            if not extent:
-                portal_description = json.loads(arcpy.GetPortalDescription())
-                default_extent = portal_description['defaultExtent']
-                coordinates = [[default_extent['xmin'], default_extent['ymin']], 
-                        [default_extent['xmax'], default_extent['ymin']], 
-                        [default_extent['xmax'], default_extent['ymax']], 
-                        [default_extent['xmin'], default_extent['ymax']], 
-                        [default_extent['xmin'], default_extent['ymin']]]
+def _get_extent_text(extent):   
+    coordinates = []
+    sr = None
 
-                polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), 
-                                        arcpy.SpatialReference(default_extent['spatialReference']['wkid']))
-                extent = polygon.extent
+    if extent:
+        default_extent = {'xmin' : extent.XMin, 'xmax' : extent.XMax, 'ymin' : extent.YMin, 'ymax' : extent.YMax }
+        sr = extent.spatialReference
+    else: # Get the default extent defined in the portal
+        portal_description = json.loads(arcpy.GetPortalDescription())
+        default_extent = portal_description['defaultExtent']
+        sr = arcpy.SpatialReference(default_extent['spatialReference']['wkid'])
+       
+    coordinates = [[default_extent['xmin'], default_extent['ymin']], 
+        [default_extent['xmax'], default_extent['ymin']], 
+        [default_extent['xmax'], default_extent['ymax']], 
+        [default_extent['xmin'], default_extent['ymax']], 
+        [default_extent['xmin'], default_extent['ymin']]]
+    polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), sr)
+    extent = polygon.extent
 
-            # Project the extent to WGS84 which is used by default for the web map and services initial extents
-            extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
-            extent_text = '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
-                                                        extent_wgs84.XMax, extent_wgs84.YMax)
-    
-            # Clone the solutions
-            _create_solutions(connection, solution_group, solutions, extent_text, output_folder)
+    # Project the extent to WGS84 which is used by default for the web map and services initial extents
+    extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
+    return '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
+                                                extent_wgs84.XMax, extent_wgs84.YMax)
 
-
+#endregion
