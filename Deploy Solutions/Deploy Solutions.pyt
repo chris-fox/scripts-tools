@@ -296,7 +296,7 @@ class DeploySolutionsLocalTool(object):
             value_table = parameters[2].value
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
-            extent = _get_default_extent(parameters[2].value)
+            extent = _get_default_extent(parameters[3].value)
             output_folder = parameters[4].valueAsText
             parameters[5].value = ''
                             
@@ -854,25 +854,10 @@ class Group(object):
     Represents the definition of a group within ArcGIS Online or Portal.
     """
 
-    def __init__(self, info, thumbnail=None):
-        self._info = info
-        self._thumbnail = thumbnail
-
-    @property
-    def info(self):
-        return self._info
-
-    @info.setter
-    def info(self, value):
-        self._info = value
-
-    @property
-    def thumbnail(self):
-        return self._thumbnail
-
-    @thumbnail.setter
-    def thumbnail(self, value):
-        self._thumbnail = value
+    def __init__(self, info, thumbnail=None, portal_group=None):
+        self.info = info
+        self.thumbnail = thumbnail
+        self.portal_group = portal_group
 
     def clone(self, connection, linked_folder=None):
         """Clone the group in the target organization.
@@ -902,8 +887,8 @@ class Group(object):
                 title = "{0} {1}".format(original_group['title'], i)
         
             thumbnail = self.thumbnail
-            if not thumbnail and isinstance(original_group, gis.Group):
-                thumbnail = original_group.get_thumbnail_link()
+            if not thumbnail and self.portal_group:
+                thumbnail = self.portal_group.get_thumbnail_link()
 
             new_group = target.groups.create(title, tags, original_group['description'], original_group['snippet'],
                                              'private', thumbnail, True, original_group['sortField'], original_group['sortOrder'], True)
@@ -931,7 +916,7 @@ class Group(object):
 
         thumbnail_directory = os.path.join(group_directory, 'thumbnail')
         os.makedirs(thumbnail_directory)
-        thumbnail = self.info.download_thumbnail(thumbnail_directory)
+        thumbnail = self.portal_group.download_thumbnail(thumbnail_directory)
         if not thumbnail:
             os.rmdir(thumbnail_directory)
 
@@ -942,46 +927,19 @@ class Item(object):
     Represents the definition of an item within ArcGIS Online or Portal.
     """
 
-    def __init__(self, info, data=None, sharing=None, thumbnail=None):
-        self._info = info
+    def __init__(self, info, data=None, sharing=None, thumbnail=None, portal_item=None):
+        self.info = info
         self._data = data      
-        self._sharing = sharing
-        self._thumbnail = thumbnail
+        self.sharing = sharing
+        self.thumbnail = thumbnail
         self._item_property_names = ['title', 'type', 'description', 
                           'snippet', 'tags', 'culture',
                         'accessInformation', 'licenseInfo', 'typeKeywords']
-
-    @property
-    def info(self):
-        return self._info
-
-    @info.setter
-    def info(self, value):
-        self._info = value
+        self.portal_item = portal_item
 
     @property
     def data(self):
         return copy.deepcopy(self._data)
-
-    @data.setter
-    def data(self, value):
-        self._data = value
-
-    @property
-    def sharing(self):
-        return self._sharing
-
-    @sharing.setter
-    def sharing(self, value):
-        self._sharing = value
-
-    @property
-    def thumbnail(self):
-        return self._thumbnail
-
-    @thumbnail.setter
-    def thumbnail(self, value):
-        self._thumbnail = value
 
     def _get_item_properties(self):
         """Get a dictionary of item properties used in create and update operations.
@@ -1034,12 +992,12 @@ class Item(object):
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 data = self.data
-                if not data and isinstance(original_item, gis.Item):
-                    data = original_item.download(temp_dir)
+                if not data and self.portal_item:
+                    data = self.portal_item.download(temp_dir)
                  
                 thumbnail = self.thumbnail
-                if not thumbnail and isinstance(original_item, gis.Item):
-                    thumbnail = original_item.download_thumbnail(temp_dir)
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
                 new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
@@ -1060,7 +1018,7 @@ class Item(object):
             return None
 
         os.makedirs(item_directory)
-        self.info.download(item_directory)
+        self.portal_item.download(item_directory)
 
         esriinfo_directory = os.path.join(item_directory, 'esriinfo')
         os.makedirs(esriinfo_directory)
@@ -1070,7 +1028,7 @@ class Item(object):
         
         thumbnail_directory = os.path.join(esriinfo_directory, 'thumbnail')
         os.makedirs(thumbnail_directory)
-        thumbnail = self.info.download_thumbnail(thumbnail_directory)
+        thumbnail = self.portal_item.download_thumbnail(thumbnail_directory)
         if not thumbnail:
             os.rmdir(thumbnail_directory)
 
@@ -1099,14 +1057,14 @@ class TextItem(Item):
             item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
             
             data = self.data
-            if not data and isinstance(original_item, gis.Item):
-                data = original_item.get_data()
+            if not data and self.portal_item:
+                data = self.portal_item.get_data()
             item_properties['text'] = json.dumps(data)
 
             with tempfile.TemporaryDirectory() as temp_dir:                 
                 thumbnail = self.thumbnail
-                if not thumbnail and isinstance(original_item, gis.Item):
-                    thumbnail = original_item.download_thumbnail(temp_dir)
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
                 new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
@@ -1127,7 +1085,7 @@ class TextItem(Item):
         item_id = self.info['id']
         data_json = os.path.join(item_directory, item_id + '.json')
         with open(data_json, 'w') as file:
-            file.write(json.dumps(self.data))
+            file.write(json.dumps(self._data))
 
         return item_directory
 
@@ -1136,26 +1094,18 @@ class FeatureServiceItem(TextItem):
     Represents the definition of a hosted feature service within ArcGIS Online or Portal.
     """
 
-    def __init__(self, info, service_definition, layers_definition, data=None, sharing=None, thumbnail=None):
-        self._service_definition = service_definition
-        self._layers_definition = layers_definition
-        super(TextItem, self).__init__(info, data, sharing, thumbnail)
+    def __init__(self, info, service_definition, layers_definition, data=None, sharing=None, thumbnail=None, portal_item=None):
+        self._service_definition = json.loads(json.dumps(service_definition))
+        self._layers_definition = json.loads(json.dumps(layers_definition))
+        super(TextItem, self).__init__(info, data, sharing, thumbnail, portal_item)
 
     @property
     def service_definition(self):
         return copy.deepcopy(self._service_definition)
 
-    @service_definition.setter
-    def service_definition(self, value):
-        self._service_definition = value
-
     @property
     def layers_definition(self):
         return copy.deepcopy(self._layers_definition)
-
-    @layers_definition.setter
-    def layers_definition(self, value):
-        self._layers_definition = value
 
     def clone(self, connection, group_mapping, extent, folder=None):
         """Clone the feature service in the target organization.
@@ -1236,8 +1186,8 @@ class FeatureServiceItem(TextItem):
 
             with tempfile.TemporaryDirectory() as temp_dir: 
                 thumbnail = self.thumbnail
-                if not thumbnail and isinstance(original_item, gis.Item):
-                    thumbnail = original_item.download_thumbnail(temp_dir)
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
                 new_item.update(item_properties=item_properties, thumbnail=thumbnail)
     
             # Share the item
@@ -1258,7 +1208,7 @@ class FeatureServiceItem(TextItem):
 
         featureserver_json = os.path.join(esriinfo_directory, "featureserver.json")
         with open(featureserver_json, 'w') as file:
-            file.write(json.dumps({'serviceDefinition' : self.service_definition, 'layersDefinition' : self.layers_definition}))
+            file.write(json.dumps({'serviceDefinition' : self._service_definition, 'layersDefinition' : self._layers_definition}))
 
         return item_directory
 
@@ -1311,8 +1261,8 @@ class WebMapItem(TextItem):
 
             with tempfile.TemporaryDirectory() as temp_dir: 
                 thumbnail = self.thumbnail
-                if not thumbnail and isinstance(original_item, gis.Item):
-                    thumbnail = original_item.download_thumbnail(temp_dir)
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
                 new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
@@ -1386,8 +1336,8 @@ class ApplicationItem(TextItem):
             # Add the application to the target portal
             with tempfile.TemporaryDirectory() as temp_dir: 
                 thumbnail = self.thumbnail
-                if not thumbnail and isinstance(original_item, gis.Item):
-                    thumbnail = original_item.download_thumbnail(temp_dir)
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
                 new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Update the url of the item to point to the new portal and new id of the application
@@ -1453,7 +1403,7 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
         solution_definition.append(ApplicationItem(solution_item, data=app_json, sharing={
 				"access": "private",
 				"groups": groups
-					}))
+					}, portal_item=solution_item))
    
         webmap_id = None
         if solution_item['type'].lower() == "operation view": #Operations Dashboard
@@ -1475,7 +1425,7 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                     group = next((g for g in solution_definition if g.info['id'] == group_id), None)
                     if not group:
                         group = source.groups.get(group_id)
-                        solution_definition.append(Group(group))
+                        solution_definition.append(Group(group, portal_group=group))
                     
                     search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
                     group_items = source.content.search(search_query, max_items=100, outside_org=True)
@@ -1495,7 +1445,7 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
         solution_definition.append(WebMapItem(solution_item, data=webmap_json, sharing={
 				"access": "private",
 				"groups": groups
-					}))
+					}, portal_item=solution_item))
         
         if 'operationalLayers' in webmap_json:
             for layer in webmap_json['operationalLayers']:
@@ -1513,14 +1463,23 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
     # If the item is a feature service get the definition of the service and its layers and tables
     elif solution_item['type'] == 'Feature Service':
         url = solution_item['url']
-        request_parameters = {'f' : 'json'}
-        service_definition = _url_request(url, request_parameters)
-        layers_defintion = _url_request(url + '/layers', request_parameters)
-        data = solution_item.get_data()
-        solution_definition.append(FeatureServiceItem(solution_item, service_definition, layers_defintion, data, {
+        svc = lyr.Service(url, source)
+        service_definition = svc.definition
+
+        #Need to serialize the item before getting the layer definitions
+        iteminfo = json.loads(json.dumps(solution_item))
+
+        layers_definition = { 'layers' : [], 'tables' : [] }
+        for layer in solution_item.layers:
+            layers_definition['layers'].append(layer.properties)
+        for table in solution_item.tables:
+            layers_definition['tables'].append(table.properties)
+        data = solution_item.get_data()     
+        
+        solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, data, {
 				    "access": "private",
 				    "groups": groups
-					    }))
+					    }, portal_item=solution_item))
 
     # All other item types
     else:
@@ -1529,12 +1488,12 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
             solution_definition.append(TextItem(solution_item, data=solution_item.get_data(), sharing={
 			"access": "private",
 			"groups": groups
-				}))
+			    }, portal_item=solution_item))
         else:
             solution_definition.append(Item(solution_item, data=None, sharing={
 			"access": "private",
 			"groups": groups
-				}))
+			    }, portal_item=solution_item))
 
 def _get_solution_definition_local(source_directory, solution, solution_definition):
     """Get the definition of the solution. This may be made up of multiple items and groups.
