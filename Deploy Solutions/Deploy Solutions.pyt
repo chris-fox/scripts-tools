@@ -163,12 +163,12 @@ class DeploySolutionsTool(object):
             value_table = parameters[1].value
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
-            extent_text = _get_extent_text(parameters[2].value)
+            extent = _get_default_extent(parameters[2].value)
             output_folder = parameters[3].valueAsText
             parameters[4].value = ''
 
             # Clone the solutions
-            _create_solutions(connection, solution_group, solutions, extent_text, output_folder)
+            _create_solutions(connection, solution_group, solutions, extent, output_folder)
             return
 
 class DeploySolutionsLocalTool(object):
@@ -296,12 +296,12 @@ class DeploySolutionsLocalTool(object):
             value_table = parameters[2].value
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
-            extent_text = _get_extent_text(parameters[2].value)
+            extent = _get_default_extent(parameters[2].value)
             output_folder = parameters[4].valueAsText
             parameters[5].value = ''
                             
             # Clone the solutions
-            _create_solutions(connection, solution_group, solutions, extent_text, output_folder)
+            _create_solutions(connection, solution_group, solutions, extent, output_folder)
             return
 
 class DownloadSolutionsTool(object):
@@ -983,7 +983,7 @@ class Item(object):
     def thumbnail(self, value):
         self._thumbnail = value
 
-    def _get_item_properties(self, extent=None):
+    def _get_item_properties(self):
         """Get a dictionary of item properties used in create and update operations.
         Keyword arguments:
         extent - The extent to use in the item properties"""
@@ -996,15 +996,14 @@ class Item(object):
             item_properties['tags'].remove(TAG)
             item_properties['typeKeywords'].append(TAG)
         item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
-        item_properties['tags'] = ','.join(item_properties['tags'])   
-        item_properties['extent'] = extent
+        item_properties['tags'] = ','.join(item_properties['tags'])
 
         return item_properties
 
     def _share_new_item(self, new_item, group_mapping):
         """Share the new item using the based on sharing properties of original item and group mapping.
         Keyword arguments:
-        extent - The extent to use in the item properties
+        new_item - The item to share
         group_mapping - A dictionary containing the id of the original group and the id of the new group"""
         if self.sharing:
             sharing = self.sharing
@@ -1028,8 +1027,9 @@ class Item(object):
             original_item = self.info
             target = connection['target']
         
-            # Get the item properties from the original web map which will be applied when the new item is created
-            item_properties = self._get_item_properties(extent)
+            # Get the item properties from the original item to be applied when the new item is created
+            item_properties = self._get_item_properties()
+            item_properties['extent'] = extent['wgs84']
             item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
 
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -1093,8 +1093,9 @@ class TextItem(Item):
             original_item = self.info
             target = connection['target']
         
-            # Get the item properties from the original web map which will be applied when the new item is created
-            item_properties = self._get_item_properties(extent)
+            # Get the item properties from the original item to be applied when the new item is created
+            item_properties = self._get_item_properties()
+            item_properties['extent'] = extent['wgs84']
             item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
             
             data = self.data
@@ -1173,7 +1174,7 @@ class FeatureServiceItem(TextItem):
             service_definition = self.service_definition
 
             # Create a new service from the definition of the original feature service
-            for key in ['layers', 'tables']:
+            for key in ['layers', 'tables', 'spatialReference', 'initialExtent', 'fullExtent', 'size']:
                 del service_definition[key]     
             service_definition['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
             url = "{0}sharing/rest/content/users/{1}/".format(connection['url'], connection['username'])
@@ -1206,6 +1207,9 @@ class FeatureServiceItem(TextItem):
                             layer['indexes'].remove(index)
                         else:
                             unique_fields.append(fields)
+                
+                # Set the extent of the feature layer to the specified default extent in web mercator
+                layer['extent'] = extent['web_mercator']
 
             # Layers needs to come before Tables or it effects the output service
             definition = json.dumps(layers_definition, sort_keys=True) 
@@ -1226,7 +1230,8 @@ class FeatureServiceItem(TextItem):
                 _url_request(admin_url, request_parameters, connection['referer'], 'POST')
 
             # Update the item definition of the service
-            item_properties = self._get_item_properties(extent)
+            item_properties = self._get_item_properties()
+            item_properties['extent'] = extent['wgs84']
             item_properties['text'] = self.data
 
             with tempfile.TemporaryDirectory() as temp_dir: 
@@ -1277,7 +1282,8 @@ class WebMapItem(TextItem):
             target = connection['target']
         
             # Get the item properties from the original web map which will be applied when the new item is created
-            item_properties = self._get_item_properties(extent)
+            item_properties = self._get_item_properties()
+            item_properties['extent'] = extent['wgs84']
             item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
 
             # Swizzle the item ids and URLs of the operational layers and tables in the web map
@@ -1338,7 +1344,7 @@ class ApplicationItem(TextItem):
             # Get the item properties from the original application which will be applied when the new item is created
             item_properties = self._get_item_properties()
 
-            # Swizzle the item ids of the web maps, groups and URLs of definied in the application's data
+            # Swizzle the item ids of the web maps, groups and URLs of defined in the application's data
             app_json = self.data
             app_json_text = ''
 
@@ -2008,7 +2014,7 @@ def _get_admin_url(parameter):
     except:
         return "Failed To Connect"
 
-def _get_extent_text(extent):   
+def _get_default_extent(extent):   
     coordinates = []
     sr = None
 
@@ -2030,7 +2036,17 @@ def _get_extent_text(extent):
 
     # Project the extent to WGS84 which is used by default for the web map and services initial extents
     extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
-    return '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
-                                                extent_wgs84.XMax, extent_wgs84.YMax)
+    extent_web_mercator = extent.projectAs(arcpy.SpatialReference(102100))
+    extent_dict = {'wgs84' : '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
+                                                extent_wgs84.XMax, extent_wgs84.YMax),
+                  'web_mercator' : {
+				    "xmin" : extent_web_mercator.XMin,
+				    "ymin" : extent_web_mercator.YMin,
+				    "xmax" : extent_web_mercator.XMax,
+				    "ymax" : extent_web_mercator.YMax,
+				    "spatialReference" : {
+					    "wkid" : 102100 } } }
+
+    return extent_dict
 
 #endregion
