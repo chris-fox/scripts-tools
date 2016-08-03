@@ -1188,18 +1188,24 @@ class FeatureServiceItem(TextItem):
             # Get the layer and table definitions from the original service
             layers_definition = self.layers_definition
 
-            # Need to remove relationships first and add them back individually 
-            # after all layers and tables have been added to the definition
             relationships = {} 
-            for table in layers_definition['tables']:
-                if 'relationships' in table and len(table['relationships']) != 0:
-                    relationships[table['id']] = table['relationships']
-                    table['relationships'] = []
-     
-            for layer in layers_definition['layers']:
+            for layer in layers_definition['layers'] + layers_definition['tables']:
+                # Need to remove relationships first and add them back individually 
+                # after all layers and tables have been added to the definition
                 if 'relationships' in layer and len(layer['relationships']) != 0:
                     relationships[layer['id']] = layer['relationships']
                     layer['relationships'] = []
+
+                # Need to remove all indexes duplicated for fields.
+                # Services get into this state due to a bug in 10.4 and 1.2
+                unique_fields = []
+                if 'indexes' in layer:
+                    for index in list(layer['indexes']):
+                        fields = index['fields'].lower()
+                        if fields in unique_fields:
+                            layer['indexes'].remove(index)
+                        else:
+                            unique_fields.append(fields)
 
             # Layers needs to come before Tables or it effects the output service
             definition = json.dumps(layers_definition, sort_keys=True) 
