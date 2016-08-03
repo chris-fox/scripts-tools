@@ -35,7 +35,7 @@ The tool should create all the services, groups, maps and apps needed for the se
 
 This tool is only designed to work on solutions that are entirely hosted, ie the services, maps and apps are all hosted by the portal. The tool by default looks for maps and apps in the [state & local try it live org](http://statelocaltryit.maps.arcgis.com/) that contain specific tags.
 
-To modify which org to search for items with the specified tags, change the value of the PORTAL_ID variable in the [_solution_helpers.py](https://github.com/chris-fox/scripts-tools/blob/master/Deploy%20Solutions/scripts/_solution_helpers.py) file to the ID of the organization that contains the items.
+To modify which org to search for items with the specified tags, change the value of the PORTAL_ID variable in the Deploy Solution.pyt file to the ID of the organization that contains the items.
 
 To add aditional maps and apps to the tool:
 
