@@ -15,7 +15,7 @@
  | limitations under the License.
  ------------------------------------------------------------------------------
  """
-import json, uuid, re, tempfile, os, copy, io, gzip, webbrowser
+import arcpy, json, uuid, re, tempfile, os, copy, io, gzip, webbrowser
 from arcgis import gis, lyr
 from urllib.request import urlopen as urlopen
 from urllib.request import Request as request
@@ -23,7 +23,6 @@ from urllib.parse import urlencode as encode
 from urllib.parse import urlparse as parse
 
 PORTAL_ID = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
-IS_RUN_FROM_PRO = False
 TAG = 'one.click.solution'
 TEXT_BASED_ITEM_TYPES = ['Web Map', 'Feature Service', 'Map Service', 'Operation View',
                                    'Image Service', 'Feature Collection', 'Feature Collection Template',
@@ -150,12 +149,6 @@ class DeploySolutionsTool(object):
     def execute(self, parameters, messages):
         connection = None
         try:
-            # Specify that we are running within Pro
-            # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
-            global IS_RUN_FROM_PRO
-            IS_RUN_FROM_PRO = True
-            import arcpy
-
             # Setup the target portal using the active portal within Pro
             target = gis.GIS('pro')
             token = arcpy.GetSigninToken()
@@ -292,12 +285,6 @@ class DeploySolutionsLocalTool(object):
     def execute(self, parameters, messages):
         connection = None
         try:
-            # Specify that we are running within Pro
-            # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
-            global IS_RUN_FROM_PRO
-            IS_RUN_FROM_PRO = True
-            import arcpy
-
             # Setup the target portal using the active portal within Pro
             target = gis.GIS('pro')
             token = arcpy.GetSigninToken()
@@ -409,12 +396,6 @@ class DownloadSolutionsTool(object):
     def execute(self, parameters, messages):
         connection = None
         try:
-            # Specify that we are running within Pro
-            # We will only leverage arcpy in this case to get/set parameters, add messages to the tool output, and set the progressor
-            global IS_RUN_FROM_PRO
-            IS_RUN_FROM_PRO = True
-            import arcpy
-
             # Setup the target portal using the active portal within Pro
             target = gis.GIS('pro')
             token = arcpy.GetSigninToken()
@@ -1377,24 +1358,14 @@ class ItemCreateException(Exception):
     """
     pass
 
-def _move_progressor():
-    """Move the progressor when the tool is running in ArcGIS Pro"""
-    if IS_RUN_FROM_PRO: #only use arcpy if we are running within Pro 
-        import arcpy
-        arcpy.SetProgressorPosition()
-
 def _add_message(message, type='Info'):
     """Add a message to the output"""
-    if IS_RUN_FROM_PRO: #only use arcpy if we are running within Pro 
-        import arcpy
-        if type == 'Info':
-            arcpy.AddMessage(message)
-        elif type == 'Warning':
-            arcpy.AddWarning(message)
-        elif type == 'Error':
-            arcpy.AddError(message)
-    else:
-        print(message)
+    if type == 'Info':
+        arcpy.AddMessage(message)
+    elif type == 'Warning':
+        arcpy.AddWarning(message)
+    elif type == 'Error':
+        arcpy.AddError(message)
 
 def _get_solution_definition_portal(source, solution_item, solution_definition, copy_features, groups=[]):
     """Get the definition of the specified item. If it is a web application or webmap it will be called recursively find all the items that make up a given map or app.
@@ -1672,6 +1643,10 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
 
     for solution in solutions:
         try:
+            deploy_message = 'Deploying {0}'.format(solution)
+            _add_message(deploy_message)
+            arcpy.SetProgressor('default', deploy_message) 
+
             # Search for the map or app in the given organization using the map or app name and a specific tag
             search_query = 'tags:"{0},solution.{1}" AND title:"{2}"'.format(TAG, solution_group, solution)
             items = target.content.search(search_query, outside_org=True)
@@ -1685,11 +1660,9 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
             message = 'Downloading {0}'.format(solution)
             _add_message(message) 
 
-            # If run from the application set the progressor
-            if IS_RUN_FROM_PRO:
-                import arcpy
-                item_count = len(solution_definition)
-                arcpy.SetProgressor('step', message, 0, item_count, 1)
+            # Set the progressor
+            item_count = len(solution_definition)
+            arcpy.SetProgressor('step', deploy_message, 0, item_count, 1)
 
             # Create the output directory if it doesn't already exist
             if not os.path.exists(output_directory):
@@ -1702,7 +1675,7 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
                     _add_message("Downloaded {0} {1}".format(item.info['type'], item.info['title']))
                 else:
                     _add_message("Existing {0} {1} already downloaded".format(item.info['type'], item.info['title']))
-                _move_progressor() 
+                arcpy.SetProgressorPosition() 
 
             # Write the groups to the output directory
             for group in [group for group in solution_definition if isinstance(group, Group)]:
@@ -1711,7 +1684,7 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
                     _add_message("Downloaded Group {0}".format(group.info['title']))
                 else:
                     _add_message("Existing Group {0} already downloaded".format(group.info['title']))
-                _move_progressor() 
+                arcpy.SetProgressorPosition() 
 
             # Update the solution definitions configuration file with the new items that have been downloaded
             solutions_definition_file = os.path.join(output_directory, 'SolutionDefinitions.json') 
@@ -1766,7 +1739,8 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
 
     group_mapping = {}   
     service_mapping = []
-    webmap_mapping = {}   
+    webmap_mapping = {}
+    deployed_items = []   
     
     # If the folder does not already exist create a new folder
     current_user = target.users.me
@@ -1779,7 +1753,11 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
     folder_items = current_user.items(folder['title'])
 
     for solution in solutions:
-        try:          
+        try:
+            deploy_message = 'Deploying {0}'.format(solution)
+            _add_message(deploy_message)
+            arcpy.SetProgressor('default', deploy_message) 
+                      
             created_items = []
             solution_definition = []           
 
@@ -1804,14 +1782,9 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                 # Get the definitions of the items and groups that make up the solution
                 _get_solution_definition_portal(source, solution_item, solution_definition, copy_features)
 
-            message = 'Deploying {0}'.format(solution)
-            _add_message(message) 
-
-            # If run from the application set the progressor
-            if IS_RUN_FROM_PRO:
-                import arcpy
-                item_count = len(solution_definition)
-                arcpy.SetProgressor('step', message, 0, item_count, 1)
+            # Set the progressor
+            item_count = len(solution_definition)
+            arcpy.SetProgressor('step', deploy_message, 0, item_count, 1)
 
             # Clone the groups
             for group in [group for group in solution_definition if isinstance(group, Group)]:
@@ -1820,7 +1793,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
 
                 if original_group['id'] in group_mapping: #We have already found or created this item
                     _add_message("Existing Group {0} found".format(original_group['title']))
-                    _move_progressor()
+                    arcpy.SetProgressorPosition()
                     continue
                 
                 new_group = _get_existing_group(connection, original_group['id'], folder)
@@ -1831,7 +1804,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                 else:
                     _add_message("Existing Group {0} found".format(new_group['title']))
                 group_mapping[original_group['id']] = new_group['id']
-                _move_progressor()
+                arcpy.SetProgressorPosition()
 
             # Clone the feature services
             for feature_service in [item for item in solution_definition if isinstance(item, FeatureServiceItem)]:
@@ -1840,7 +1813,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
 
                 if original_item['id'] in [service_map[0][0] for service_map in service_mapping]: #We have already found or created this item
                     _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
-                    _move_progressor()
+                    arcpy.SetProgressorPosition()
                     continue
 
                 new_item = _get_existing_item(original_item, folder_items)
@@ -1852,7 +1825,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                     _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))        
                 service_mapping.append([(original_item['id'], original_item['url']),
                                             (new_item['id'], new_item['url'])])
-                _move_progressor()
+                arcpy.SetProgressorPosition()
 
             # Clone the web maps
             for webmap in [item for item in solution_definition if isinstance(item, WebMapItem)]:
@@ -1861,7 +1834,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
 
                 if original_item['id'] in webmap_mapping: #We have already found or created this item
                     _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
-                    _move_progressor()
+                    arcpy.SetProgressorPosition()
                     continue
           
                 new_item = _get_existing_item(original_item, folder_items)
@@ -1872,7 +1845,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                 else:
                     _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
                 webmap_mapping[original_item['id']] =  new_item['id']
-                _move_progressor()
+                arcpy.SetProgressorPosition()
 
             # Clone the applications
             for application in [item for item in solution_definition if isinstance(item, ApplicationItem)]:
@@ -1886,7 +1859,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                     _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
                 else:
                     _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
-                _move_progressor()
+                arcpy.SetProgressorPosition()
             
             # Clone all other items
             for item in solution_definition:
@@ -1899,7 +1872,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                     _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
                 else:
                     _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
-                _move_progressor()               
+                arcpy.SetProgressorPosition()             
 
             _add_message('Successfully added {0}'.format(solution))
             _add_message('------------------------')
@@ -1967,7 +1940,6 @@ def _url_request(url, request_parameters, referer=None, request_type='GET', repe
     return response_json
 
 def _get_fields(parameter):
-    import arcpy
     admin_url = _get_admin_url(parameter)
     if admin_url in ["Invalid URL", "Failed To Connect"]:
         return admin_url
@@ -1985,7 +1957,6 @@ def _get_fields(parameter):
         return "Failed To Connect"
 
 def _get_admin_url(parameter):
-    import arcpy
     url = None
     input = parameter.value
     if type(input) == arcpy._mp.Layer: # Layer in the map
