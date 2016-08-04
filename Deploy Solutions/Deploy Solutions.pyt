@@ -1367,13 +1367,13 @@ def _add_message(message, type='Info'):
     elif type == 'Error':
         arcpy.AddError(message)
 
-def _get_solution_definition_portal(source, solution_item, solution_definition, deployed_items, copy_features, groups=[]):
+def _get_solution_definition_portal(source, solution_item, solution_definition, cached_items, copy_features, groups=[]):
     """Get the definition of the specified item. If it is a web application or webmap it will be called recursively find all the items that make up a given map or app.
     Keyword arguments:
     source - The portal containing the item
     solution_item - The item to get the definition from
     solution_definition - A list of item and group definitions that make up the solution
-    deployed_items -  A list of item and group definitions that have already been retrieved in previous runs
+    cached_items -  A list of item and group definitions that have already been retrieved in previous runs
     copy_features - A flag indicating if the data from the original feature services should be copied
     group - A list of groups to share the item with, used when the web application is based on a group of maps"""  
 
@@ -1382,13 +1382,14 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
     if existing_item:
         return
 
-    deployed_item = next((i for i in deployed_items if i.info['id'] == solution_item.id), None)
-    solution_definition.append(deployed_item)
+    cached_item = next((i for i in cached_items if i.info['id'] == solution_item.id), None)
+    if cached_item:
+        solution_definition.append(cached_item)
 
     # If the item is an application or dashboard find the web map or group that the application is built from
     if solution_item['type'] in ['Web Mapping Application','Operation View']:
-        if deployed_item:
-            app_json = deployed_item.data
+        if cached_item:
+            app_json = cached_item.data
         else:
             app_json = solution_item.get_data()
             solution_definition.append(ApplicationItem(solution_item, data=app_json, sharing={
@@ -1415,10 +1416,10 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                     group_id = app_json['values']['group']
                     group = next((g for g in solution_definition if g.info['id'] == group_id), None)
                     if not group:
-                        deployed_group = next((i for i in deployed_items if i.info['id'] == group_id), None)
-                        if deployed_group:
-                            group = deployed_group.portal_group
-                            solution_definition.append(deployed_group)
+                        cached_group = next((i for i in cached_items if i.info['id'] == group_id), None)
+                        if cached_group:
+                            group = cached_group.portal_group
+                            solution_definition.append(cached_group)
                         else:
                             group = source.groups.get(group_id)
                             id = group.id # Bug, thumbnail is not returned properly unless we request another property from the object
@@ -1427,23 +1428,23 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                     search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
                     group_items = source.content.search(search_query, max_items=100, outside_org=True)
                     for webmap in group_items:
-                        _get_solution_definition_portal(source, webmap, solution_definition, deployed_items, copy_features, [group_id])
+                        _get_solution_definition_portal(source, webmap, solution_definition, cached_items, copy_features, [group_id])
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
         
         if webmap_id:
-            deployed_webmap = next((i for i in deployed_items if i.info['id'] == webmap_id), None)
-            if deployed_webmap:
-                webmap = deployed_webmap.portal_item
+            cached_webmap = next((i for i in cached_items if i.info['id'] == webmap_id), None)
+            if cached_webmap:
+                webmap = cached_webmap.portal_item
             else:
                 webmap = source.content.get(webmap_id)
-            _get_solution_definition_portal(source, webmap, solution_definition, deployed_items, copy_features)
+            _get_solution_definition_portal(source, webmap, solution_definition, cached_items, copy_features)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
     elif solution_item['type'] == 'Web Map':
-        if deployed_item:
-            webmap_json = deployed_item.data
+        if cached_item:
+            webmap_json = cached_item.data
         else:    
             webmap_json = solution_item.get_data()
             solution_definition.append(WebMapItem(solution_item, data=webmap_json, sharing={
@@ -1455,26 +1456,26 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
             for layer in webmap_json['operationalLayers']:
                 if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer":
                     if 'itemId' in layer:
-                        deployed_service = next((i for i in deployed_items if i.info['id'] == layer['id']), None)
-                        if deployed_service:
-                            feature_service = deployed_service.portal_item
+                        cached_service = next((i for i in cached_items if i.info['id'] == layer['id']), None)
+                        if cached_service:
+                            feature_service = cached_service.portal_item
                         else:
                             feature_service = source.content.get(layer['itemId'])
-                        _get_solution_definition_portal(source, feature_service, solution_definition, deployed_items, copy_features)
+                        _get_solution_definition_portal(source, feature_service, solution_definition, cached_items, copy_features)
 
         if 'tables' in webmap_json:
             for table in webmap_json['tables']:
                     if 'itemId' in table:
-                        deployed_service = next((i for i in deployed_items if i.info['id'] == table['id']), None)
-                        if deployed_service:
-                            feature_service = deployed_service.portal_item
+                        cached_service = next((i for i in cached_items if i.info['id'] == table['id']), None)
+                        if cached_service:
+                            feature_service = cached_service.portal_item
                         else:
                             feature_service = source.content.get(table['itemId'])
-                        _get_solution_definition_portal(source, feature_service, solution_definition, deployed_items, copy_features)
+                        _get_solution_definition_portal(source, feature_service, solution_definition, cached_items, copy_features)
 
     # If the item is a feature service get the definition of the service and its layers and tables
     elif solution_item['type'] == 'Feature Service':
-        if not deployed_item:
+        if not cached_item:
             url = solution_item['url']
             svc = lyr.Service(url, source)
             service_definition = svc.definition
@@ -1506,7 +1507,7 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
 
     # All other item types
     else:
-        if not deployed_item:
+        if not cached_item:
             if solution_item['type'] in TEXT_BASED_ITEM_TYPES:
                 item_definition['data'] = solution_item.get_data()
                 solution_definition.append(TextItem(solution_item, data=solution_item.get_data(), sharing={
@@ -1519,13 +1520,13 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
 			    "groups": groups
 			        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
 
-def _get_solution_definition_local(source_directory, solution, solution_definition, deployed_items, copy_features):
+def _get_solution_definition_local(source_directory, solution, solution_definition, cached_items, copy_features):
     """Get the definition of the solution. This may be made up of multiple items and groups.
     Keyword arguments:
     source_directory - The directory containing the items and the SolutionDefinition.json file that defines the items that make up a given solution.
     solution - The name of the solution to get the definitions for.
     solution_items - A list of item and group definitions that make up the solution
-    deployed_items -  A list of item and group definitions that have already been retrieved in previous runs
+    cached_items -  A list of item and group definitions that have already been retrieved in previous runs
     copy_features - A flag indicating if the data from the original feature services should be copied"""  
 
     # Read the SolutionDefinitions.json file to get the IDs of the items and groups that make up the solution
@@ -1544,9 +1545,9 @@ def _get_solution_definition_local(source_directory, solution, solution_definiti
 
     # Get the definition of each item defined within the solution
     for item_id in definitions['Solutions'][solution]['items']:
-        deployed_item = next((i for i in deployed_items if i.info['id'] == item_id), None)
-        if deployed_item:
-            solution_definition.append(deployed_item)
+        cached_item = next((i for i in cached_items if i.info['id'] == item_id), None)
+        if cached_item:
+            solution_definition.append(cached_item)
             continue
 
         item_directory = os.path.join(source_directory, item_id)
@@ -1605,9 +1606,9 @@ def _get_solution_definition_local(source_directory, solution, solution_definiti
 
     # Get the definition of each group defined within the solution
     for group_id in definitions['Solutions'][solution]['groups']:
-        deployed_item = next((i for i in deployed_items if i.info['id'] == group_id), None)
-        if deployed_item:
-            solution_definition.append(deployed_item)
+        cached_item = next((i for i in cached_items if i.info['id'] == group_id), None)
+        if cached_item:
+            solution_definition.append(cached_item)
             continue
 
         group_directory = os.path.join(source_directory, 'groupinfo', group_id)
@@ -1681,7 +1682,7 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
     output_directory - The directory to write the solution items and the definition configuration file""" 
     
     target = connection['target']
-    deployed_items = []
+    cached_items = []
 
     for solution in solutions:
         try:
@@ -1698,7 +1699,10 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
 
             # Get the definitions of the groups and items (maps, services in the case of an spplication) that make up the solution
             solution_definition = []
-            _get_solution_definition_portal(target, solution_item, solution_definition, deployed_items, copy_features)
+            _get_solution_definition_portal(target, solution_item, solution_definition, cached_items, copy_features)
+
+            # Add the items to the cached list so they can be reused if items are reused in other solutions
+            cached_items = list(set(cached_items + solution_definition))
 
             # Set the progressor
             item_count = len(solution_definition)
@@ -1756,8 +1760,6 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
                 file.write(json.dumps(definitions))
                 file.truncate()
 
-            # Everything has been successfully downloaded, add the list of items to the list of items that have been deployed during the entire run
-            deployed_items = list(set(deployed_items + solution_definition))
             _add_message('Successfully downloaded {0}'.format(solution))
             _add_message('------------------------')
         except Exception as e:
@@ -1783,7 +1785,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
     group_mapping = {}   
     service_mapping = []
     webmap_mapping = {}
-    deployed_items = []
+    cached_items = []
     
     # If the folder does not already exist create a new folder
     current_user = target.users.me
@@ -1806,7 +1808,7 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
 
             if connection['local']:
                 # Get the definitions of the items and groups that make up the solution
-                _get_solution_definition_local(source_directory, solution, solution_definition, deployed_items, copy_features)
+                _get_solution_definition_local(source_directory, solution, solution_definition, cached_items, copy_features)
             else:
                 # Search for the map or app in the given organization using the map or app name and a specific tag
                 search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(PORTAL_ID, TAG, solution_group, solution)
@@ -1825,14 +1827,14 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                     continue
 
                 # Get the definitions of the items and groups that make up the solution
-                _get_solution_definition_portal(source, solution_item, solution_definition, deployed_items, copy_features)
+                _get_solution_definition_portal(source, solution_item, solution_definition, cached_items, copy_features)
 
             # Set the progressor
             item_count = len(solution_definition)
             arcpy.SetProgressor('step', deploy_message, 0, item_count, 1)
 
-            # Create a copy of the list referencing the original solution items so they don't need to be fetched again future loops
-            original_solution_items = list(solution_definition)
+            # Add the items to the cached list so they can be reused if items are reused in other solutions
+            cached_items = list(set(cached_items + solution_definition))
 
             # Clone the groups
             for group in [group for group in solution_definition if isinstance(group, Group)]:
@@ -1922,8 +1924,6 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                     _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
                 arcpy.SetProgressorPosition()             
 
-            # Everything has been successfully cloned, add the list of items to the list of items that have been deployed during the entire run
-            deployed_items = list(set(deployed_items + original_solution_items))
             _add_message('Successfully added {0}'.format(solution))
             _add_message('------------------------')
 
