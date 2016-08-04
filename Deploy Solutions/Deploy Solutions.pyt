@@ -73,20 +73,28 @@ class DeploySolutionsTool(object):
             direction="Input")
 
         param3 = arcpy.Parameter(
+            displayName="Copy Sample Data",
+            name="copy_sample_data",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param3.value = False
+
+        param4 = arcpy.Parameter(
             displayName="Folder",
             name="folder",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
-        param4 = arcpy.Parameter(
+        param5 = arcpy.Parameter(
             displayName="Validation JSON",
             name="validation_json",
             datatype="GPString",
             parameterType="Derived",
             direction="Output")
 
-        params = [param0, param1, param2, param3, param4]
+        params = [param0, param1, param2, param3, param4, param5]
         return params
 
     def isLicensed(self):
@@ -98,7 +106,7 @@ class DeploySolutionsTool(object):
         validation is performed.  This method is called whenever a parameter
         has been changed."""
         if not parameters[0].hasBeenValidated:
-            if not parameters[4].value:
+            if not parameters[5].value:
                 source = gis.GIS()
                 search_query = 'accountid:{0} AND tags:"{1}"'.format(PORTAL_ID, TAG)               
                 items = source.content.search(search_query, max_items=1000)
@@ -115,24 +123,24 @@ class DeploySolutionsTool(object):
 
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
-                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'solutions' : solutions, 'folders' : folders }
-                parameters[4].value = json.dumps(validation_json)
+                parameters[5].value = json.dumps(validation_json)
 
             if parameters[0].value:
-                validation_json = json.loads(parameters[4].valueAsText)  
+                validation_json = json.loads(parameters[5].valueAsText)  
                 solutions = validation_json['solutions']   
                 solution_name = parameters[0].valueAsText
                 parameters[1].filter.list = sorted([map_app for map_app in solutions[solution_name]])
                 parameters[1].value = arcpy.ValueTable()
 
-        if not parameters[3].hasBeenValidated:
-            validation_json = json.loads(parameters[4].valueAsText)  
+        if not parameters[4].hasBeenValidated:
+            validation_json = json.loads(parameters[5].valueAsText)  
             folders = validation_json['folders']
-            if parameters[3].value:
-                parameters[3].filter.list = sorted(set([parameters[3].valueAsText] + [folder['title'] for folder in folders]))
+            if parameters[4].value:
+                parameters[4].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
             else:
-                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
@@ -164,11 +172,12 @@ class DeploySolutionsTool(object):
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
             extent = _get_default_extent(parameters[2].value)
-            output_folder = parameters[3].valueAsText
-            parameters[4].value = ''
+            copy_features = parameters[3].value
+            output_folder = parameters[4].valueAsText
+            parameters[5].value = ''
 
             # Clone the solutions
-            _create_solutions(connection, solution_group, solutions, extent, output_folder)
+            _create_solutions(connection, solution_group, solutions, extent, copy_features, output_folder)
             return
 
 class DeploySolutionsLocalTool(object):
@@ -209,20 +218,28 @@ class DeploySolutionsLocalTool(object):
             direction="Input")
 
         param4 = arcpy.Parameter(
+            displayName="Copy Sample Data",
+            name="copy_sample_data",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param4.value = False
+
+        param5 = arcpy.Parameter(
             displayName="Folder",
             name="folder",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
-        param5 = arcpy.Parameter(
+        param6 = arcpy.Parameter(
             displayName="Validation JSON",
             name="validation_json",
             datatype="GPString",
             parameterType="Derived",
             direction="Output")
 
-        params = [param0, param1, param2, param3, param4, param5]
+        params = [param0, param1, param2, param3, param4, param5, param6]
         return params
 
     def isLicensed(self):
@@ -242,12 +259,12 @@ class DeploySolutionsLocalTool(object):
                         definitions = json.loads(content)
                         parameters[1].filter.list = sorted([solution_group for solution_group in definitions['Solution Groups']])
 
-            if not parameters[4].value:
+            if not parameters[5].value:
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
-                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[5].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json = { 'folders' : folders }
-                parameters[5].value = json.dumps(validation_json)
+                parameters[6].value = json.dumps(validation_json)
         
         if not parameters[1].hasBeenValidated and parameters[1].value:
             solutions_definition_file = os.path.join(parameters[0].valueAsText, 'SolutionDefinitions.json') 
@@ -259,13 +276,13 @@ class DeploySolutionsLocalTool(object):
                     if solution_group in definitions['Solution Groups']:
                         parameters[2].filter.list = sorted(definitions['Solution Groups'][solution_group])
 
-        if not parameters[4].hasBeenValidated:
-            validation_json = json.loads(parameters[5].valueAsText)  
+        if not parameters[5].hasBeenValidated:
+            validation_json = json.loads(parameters[6].valueAsText)  
             folders = validation_json['folders']
-            if parameters[4].value:
-                parameters[4].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
+            if parameters[5].value:
+                parameters[5].filter.list = sorted(set([parameters[5].valueAsText] + [folder['title'] for folder in folders]))
             else:
-                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[5].filter.list = sorted([folder['title'] for folder in folders])
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
@@ -297,11 +314,12 @@ class DeploySolutionsLocalTool(object):
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
             extent = _get_default_extent(parameters[3].value)
-            output_folder = parameters[4].valueAsText
-            parameters[5].value = ''
+            copy_features = parameters[4].value
+            output_folder = parameters[5].valueAsText
+            parameters[6].value = ''
                             
             # Clone the solutions
-            _create_solutions(connection, solution_group, solutions, extent, output_folder)
+            _create_solutions(connection, solution_group, solutions, extent, copy_features, output_folder)
             return
 
 class DownloadSolutionsTool(object):
@@ -328,20 +346,28 @@ class DownloadSolutionsTool(object):
             multiValue=True)
 
         param2 = arcpy.Parameter(
+            displayName="Copy Sample Data",
+            name="copy_sample_data",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param2.value = False
+
+        param3 = arcpy.Parameter(
             displayName="Output Directory",
             name="output_directory",
             datatype="DEFolder",
             parameterType="Required",
             direction="Input")
 
-        param3 = arcpy.Parameter(
+        param4 = arcpy.Parameter(
             displayName="Validation JSON",
             name="validation_json",
             datatype="GPString",
             parameterType="Derived",
             direction="Output")
 
-        params = [param0, param1, param2, param3]
+        params = [param0, param1, param2, param3, param4]
         return params
 
     def isLicensed(self):
@@ -353,7 +379,7 @@ class DownloadSolutionsTool(object):
         validation is performed.  This method is called whenever a parameter
         has been changed."""
         if not parameters[0].hasBeenValidated:
-            if parameters[3].value is None:
+            if parameters[4].value is None:
                 source = gis.GIS()
                 search_query = 'accountid:{0} AND tags:"{1}"'.format(PORTAL_ID, TAG)               
                 items = source.content.search(search_query, max_items=1000)
@@ -367,10 +393,10 @@ class DownloadSolutionsTool(object):
                         solutions[solution_name] = []
                     solutions[solution_name].append(item.title)
                 parameters[0].filter.list = sorted([solution_name for solution_name in solutions])
-                parameters[3].value = json.dumps(solutions)
+                parameters[4].value = json.dumps(solutions)
 
             if parameters[0].value:
-                solutions = json.loads(parameters[3].valueAsText)     
+                solutions = json.loads(parameters[4].valueAsText)     
                 solution_name = parameters[0].valueAsText
                 parameters[1].filter.list = sorted([map_app for map_app in solutions[solution_name]])
                 parameters[1].value = arcpy.ValueTable()
@@ -404,9 +430,10 @@ class DownloadSolutionsTool(object):
             value_table = parameters[1].value
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
-            output_directory = parameters[2].valueAsText
-            parameters[3].value = ''
-            _download_solutions(connection, solution_group, solutions, output_directory)
+            copy_features = parameters[2].value
+            output_directory = parameters[3].valueAsText
+            parameters[4].value = ''
+            _download_solutions(connection, solution_group, solutions, copy_features, output_directory)
             return
 
 class UpdateDomainTool(object):
@@ -1078,9 +1105,10 @@ class FeatureServiceItem(TextItem):
     Represents the definition of a hosted feature service within ArcGIS Online or Portal.
     """
 
-    def __init__(self, info, service_definition, layers_definition, data=None, sharing=None, thumbnail=None, portal_item=None):
+    def __init__(self, info, service_definition, layers_definition, features=None, data=None, sharing=None, thumbnail=None, portal_item=None):
         self._service_definition = json.loads(json.dumps(service_definition))
         self._layers_definition = json.loads(json.dumps(layers_definition))
+        self.features = features
         super(TextItem, self).__init__(info, data, sharing, thumbnail, portal_item)
 
     @property
@@ -1109,7 +1137,8 @@ class FeatureServiceItem(TextItem):
 
             # Create a new service from the definition of the original feature service
             for key in ['layers', 'tables', 'spatialReference', 'initialExtent', 'fullExtent', 'size']:
-                del service_definition[key]     
+                if key in service_definition:
+                    del service_definition[key]     
             service_definition['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
             url = "{0}sharing/rest/content/users/{1}/".format(connection['url'], connection['username'])
             if folder:
@@ -1170,6 +1199,14 @@ class FeatureServiceItem(TextItem):
 
             new_item.update(item_properties=item_properties, thumbnail=self.thumbnail)
     
+            # Copy features from original item
+            if self.features:
+                for layer in new_item.layers + new_item.tables:
+                    features = self.features[str(layer.properties['id'])]
+                    chunk_size = 2000
+                    for features_chunk in [features[i:i+chunk_size] for i in range(0, len(features), chunk_size)]:
+                        layer.edit_features(adds=features_chunk)
+                        
             # Share the item
             self._share_new_item(new_item, group_mapping)
 
@@ -1189,6 +1226,11 @@ class FeatureServiceItem(TextItem):
         featureserver_json = os.path.join(esriinfo_directory, "featureserver.json")
         with open(featureserver_json, 'w') as file:
             file.write(json.dumps({'serviceDefinition' : self._service_definition, 'layersDefinition' : self._layers_definition}))
+
+        if self.features:
+            features_json = os.path.join(esriinfo_directory, "features.json")
+            with open(features_json, 'w') as file:
+                file.write(json.dumps(self.features))  
 
         return item_directory
 
@@ -1354,7 +1396,7 @@ def _add_message(message, type='Info'):
     else:
         print(message)
 
-def _get_solution_definition_portal(source, solution_item, solution_definition, groups=[]):
+def _get_solution_definition_portal(source, solution_item, solution_definition, copy_features, groups=[]):
     """Get the definition of the specified item. If it is a web application or webmap it will be called recursively find all the items that make up a given map or app.
     Keyword arguments:
     source - The portal containing the item
@@ -1402,14 +1444,14 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                     search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
                     group_items = source.content.search(search_query, max_items=100, outside_org=True)
                     for webmap in group_items:
-                        _get_solution_definition_portal(source, webmap, solution_definition, [group_id])
+                        _get_solution_definition_portal(source, webmap, solution_definition, copy_features, [group_id])
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
         
         if webmap_id:
             webmap = source.content.get(webmap_id)
-            _get_solution_definition_portal(source, webmap, solution_definition)
+            _get_solution_definition_portal(source, webmap, solution_definition, copy_features)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
     elif solution_item['type'] == 'Web Map':
@@ -1424,13 +1466,13 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                 if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer":
                     if 'itemId' in layer:
                         feature_service = source.content.get(layer['itemId'])
-                        _get_solution_definition_portal(source, feature_service, solution_definition)
+                        _get_solution_definition_portal(source, feature_service, solution_definition, copy_features)
 
         if 'tables' in webmap_json:
             for table in webmap_json['tables']:
                     if 'itemId' in table:
                         feature_service = source.content.get(table['itemId'])
-                        _get_solution_definition_portal(source, feature_service, solution_definition)
+                        _get_solution_definition_portal(source, feature_service, solution_definition, copy_features)
 
     # If the item is a feature service get the definition of the service and its layers and tables
     elif solution_item['type'] == 'Feature Service':
@@ -1438,17 +1480,27 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
         svc = lyr.Service(url, source)
         service_definition = svc.definition
 
-        #Need to serialize the item before getting the layer definitions
+        # Need to serialize the item before getting the layer definitions
         iteminfo = json.loads(json.dumps(solution_item))
 
+        # Get the defintions of the the layers and tables
         layers_definition = { 'layers' : [], 'tables' : [] }
         for layer in solution_item.layers:
             layers_definition['layers'].append(layer.properties)
         for table in solution_item.tables:
             layers_definition['tables'].append(table.properties)
+        
+        # Get the data associated with the item 
         data = solution_item.get_data()     
         
-        solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, data=data, sharing= {
+        # Get the features for the layers and tables if requested
+        features = None
+        if copy_features:
+            features = {}
+            for layer in solution_item.layers + solution_item.tables:
+                features[str(layer.properties['id'])] = _get_features(layer)
+
+        solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, features=features, data=data, sharing= {
 				    "access": "private",
 				    "groups": groups
 					    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
@@ -1467,7 +1519,7 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
 			"groups": groups
 			    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
 
-def _get_solution_definition_local(source_directory, solution, solution_definition):
+def _get_solution_definition_local(source_directory, solution, solution_definition, copy_features):
     """Get the definition of the solution. This may be made up of multiple items and groups.
     Keyword arguments:
     source_directory - The directory containing the items and the SolutionDefinition.json file that defines the items that make up a given solution.
@@ -1513,11 +1565,19 @@ def _get_solution_definition_local(source_directory, solution, solution_definiti
                 content = file.read() 
                 data = json.loads(content)
             if type == 'Feature Service':
-                featureserver = os.path.join(esriinfo_directory, 'featureserver.json')
-                with open(featureserver, 'r') as file:
-                    content = file.read() 
-                    featureserver = json.loads(content)
-                    solution_item = FeatureServiceItem(item['info'], featureserver['serviceDefinition'], featureserver['layersDefinition'], data, item['sharing'])
+                featureserver_json = None
+                features_json = None
+                featureserver_file = os.path.join(esriinfo_directory, 'featureserver.json')
+                with open(featureserver_file, 'r') as file:
+                    featureserver_json = json.loads(file.read())
+                if copy_features:
+                    features_file = os.path.join(esriinfo_directory, 'features.json')
+                    if os.path.exists(features_file):
+                        with open(features_file, 'r') as file:
+                            features_json = json.loads(file.read())
+
+                solution_item = FeatureServiceItem(item['info'], featureserver_json['serviceDefinition'], featureserver_json['layersDefinition'], features=features_json, data=data, sharing=item['sharing'])
+
             elif type == 'Web Map':
                 solution_item = WebMapItem(item['info'], data, item['sharing'])
             elif type in ['Web Mapping Application', 'Operation View']:
@@ -1559,6 +1619,19 @@ def _get_solution_definition_local(source_directory, solution, solution_definiti
         # Append the group to the list
         solution_definition.append(solution_group)
 
+def _get_features(layer):
+    total_features = []
+    record_count = layer.query(returnCountOnly = True)
+    max_record_count = layer.properties['maxRecordCount']
+    if max_record_count < 1:
+        max_record_count = 1000
+    offset = 0
+    while offset < record_count:
+        features = layer.query(as_json=True, outSR=102100, resultOffset=offset, resultRecordCount=max_record_count)['features']
+        offset += len(features)
+        total_features += features
+    return total_features
+
 def _get_existing_item(item, folder_items):
     """Test if an item with a given source tag already exists in the user's content. 
     This is used to determine if the service, map or app has already been created in the folder.
@@ -1587,7 +1660,7 @@ def _get_existing_group(connection, group_id, linked_folder):
         return groups[0]
     return None
 
-def _download_solutions(connection, solution_group, solutions, output_directory):
+def _download_solutions(connection, solution_group, solutions, copy_features, output_directory):
     """Download solutions from a portal to a local directory
     Keyword arguments:
     connection - Dictionary containing connection info to the target portal
@@ -1608,7 +1681,7 @@ def _download_solutions(connection, solution_group, solutions, output_directory)
 
             # Get the definitions of the groups and items (maps, services in the case of an spplication) that make up the solution
             solution_definition = []
-            _get_solution_definition_portal(target, solution_item, solution_definition)
+            _get_solution_definition_portal(target, solution_item, solution_definition, copy_features)
             message = 'Downloading {0}'.format(solution)
             _add_message(message) 
 
@@ -1676,7 +1749,7 @@ def _download_solutions(connection, solution_group, solutions, output_directory)
             _add_message('Failed to download {0}: {1}'.format(solution, str(e)), 'Error')
             _add_message('------------------------')
 
-def _create_solutions(connection, solution_group, solutions, extent, output_folder):
+def _create_solutions(connection, solution_group, solutions, extent, copy_features, output_folder):
     """Clone solutions into a new portal
     Keyword arguments:
     connection - Dictionary containing connection info to the target portal
@@ -1712,7 +1785,7 @@ def _create_solutions(connection, solution_group, solutions, extent, output_fold
 
             if connection['local']:
                 # Get the definitions of the items and groups that make up the solution
-                _get_solution_definition_local(source_directory, solution, solution_definition)
+                _get_solution_definition_local(source_directory, solution, solution_definition, copy_features)
             else:
                 # Search for the map or app in the given organization using the map or app name and a specific tag
                 search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(PORTAL_ID, TAG, solution_group, solution)
@@ -1729,7 +1802,7 @@ def _create_solutions(connection, solution_group, solutions, extent, output_fold
                     continue
 
                 # Get the definitions of the items and groups that make up the solution
-                _get_solution_definition_portal(source, solution_item, solution_definition)
+                _get_solution_definition_portal(source, solution_item, solution_definition, copy_features)
 
             message = 'Deploying {0}'.format(solution)
             _add_message(message) 
