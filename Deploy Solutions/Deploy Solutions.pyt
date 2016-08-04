@@ -1383,18 +1383,18 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
         return
 
     deployed_item = next((i for i in deployed_items if i.info['id'] == solution_item.id), None)
-    if deployed_item:
-        solution_definition.append(deployed_item)
-        return
+    solution_definition.append(deployed_item)
 
     # If the item is an application or dashboard find the web map or group that the application is built from
     if solution_item['type'] in ['Web Mapping Application','Operation View']:
-        app_json = solution_item.get_data()
-        
-        solution_definition.append(ApplicationItem(solution_item, data=app_json, sharing={
-				"access": "private",
-				"groups": groups
-					}, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+        if deployed_item:
+            app_json = deployed_item.data
+        else:
+            app_json = solution_item.get_data()
+            solution_definition.append(ApplicationItem(solution_item, data=app_json, sharing={
+				    "access": "private",
+				    "groups": groups
+					    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
    
         webmap_id = None
         if solution_item['type'].lower() == "operation view": #Operations Dashboard
@@ -1415,9 +1415,14 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                     group_id = app_json['values']['group']
                     group = next((g for g in solution_definition if g.info['id'] == group_id), None)
                     if not group:
-                        group = source.groups.get(group_id)
-                        id = group.id
-                        solution_definition.append(Group(group, thumbnail=group.get_thumbnail_link(), portal_group=group))
+                        deployed_group = next((i for i in deployed_items if i.info['id'] == group_id), None)
+                        if deployed_group:
+                            group = deployed_group.portal_group
+                            solution_definition.append(deployed_group)
+                        else:
+                            group = source.groups.get(group_id)
+                            id = group.id # Bug, thumbnail is not returned properly unless we request another property from the object
+                            solution_definition.append(Group(group, thumbnail=group.get_thumbnail_link(), portal_group=group))
                     
                     search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
                     group_items = source.content.search(search_query, max_items=100, outside_org=True)
@@ -1428,74 +1433,91 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                     webmap_id = app_json['values']['webmap']
         
         if webmap_id:
-            webmap = source.content.get(webmap_id)
+            deployed_webmap = next((i for i in deployed_items if i.info['id'] == webmap_id), None)
+            if deployed_webmap:
+                webmap = deployed_webmap.portal_item
+            else:
+                webmap = source.content.get(webmap_id)
             _get_solution_definition_portal(source, webmap, solution_definition, deployed_items, copy_features)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
     elif solution_item['type'] == 'Web Map':
-        webmap_json = solution_item.get_data()
-        solution_definition.append(WebMapItem(solution_item, data=webmap_json, sharing={
-				"access": "private",
-				"groups": groups
-					}, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+        if deployed_item:
+            webmap_json = deployed_item.data
+        else:    
+            webmap_json = solution_item.get_data()
+            solution_definition.append(WebMapItem(solution_item, data=webmap_json, sharing={
+				    "access": "private",
+				    "groups": groups
+					    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
         
         if 'operationalLayers' in webmap_json:
             for layer in webmap_json['operationalLayers']:
                 if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer":
                     if 'itemId' in layer:
-                        feature_service = source.content.get(layer['itemId'])
+                        deployed_service = next((i for i in deployed_items if i.info['id'] == layer['id']), None)
+                        if deployed_service:
+                            feature_service = deployed_service.portal_item
+                        else:
+                            feature_service = source.content.get(layer['itemId'])
                         _get_solution_definition_portal(source, feature_service, solution_definition, deployed_items, copy_features)
 
         if 'tables' in webmap_json:
             for table in webmap_json['tables']:
                     if 'itemId' in table:
-                        feature_service = source.content.get(table['itemId'])
+                        deployed_service = next((i for i in deployed_items if i.info['id'] == table['id']), None)
+                        if deployed_service:
+                            feature_service = deployed_service.portal_item
+                        else:
+                            feature_service = source.content.get(table['itemId'])
                         _get_solution_definition_portal(source, feature_service, solution_definition, deployed_items, copy_features)
 
     # If the item is a feature service get the definition of the service and its layers and tables
     elif solution_item['type'] == 'Feature Service':
-        url = solution_item['url']
-        svc = lyr.Service(url, source)
-        service_definition = svc.definition
+        if not deployed_item:
+            url = solution_item['url']
+            svc = lyr.Service(url, source)
+            service_definition = svc.definition
 
-        # Need to serialize the item before getting the layer definitions
-        iteminfo = json.loads(json.dumps(solution_item))
+            # Need to serialize the item before getting the layer definitions
+            iteminfo = json.loads(json.dumps(solution_item))
 
-        # Get the defintions of the the layers and tables
-        layers_definition = { 'layers' : [], 'tables' : [] }
-        for layer in solution_item.layers:
-            layers_definition['layers'].append(layer.properties)
-        for table in solution_item.tables:
-            layers_definition['tables'].append(table.properties)
+            # Get the defintions of the the layers and tables
+            layers_definition = { 'layers' : [], 'tables' : [] }
+            for layer in solution_item.layers:
+                layers_definition['layers'].append(layer.properties)
+            for table in solution_item.tables:
+                layers_definition['tables'].append(table.properties)
         
-        # Get the data associated with the item 
-        data = solution_item.get_data()     
+            # Get the data associated with the item 
+            data = solution_item.get_data()     
         
-        # Get the features for the layers and tables if requested
-        features = None
-        if copy_features:
-            features = {}
-            for layer in solution_item.layers + solution_item.tables:
-                features[str(layer.properties['id'])] = _get_features(layer)
+            # Get the features for the layers and tables if requested
+            features = None
+            if copy_features:
+                features = {}
+                for layer in solution_item.layers + solution_item.tables:
+                    features[str(layer.properties['id'])] = _get_features(layer)
 
-        solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, features=features, data=data, sharing= {
-				    "access": "private",
-				    "groups": groups
-					    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+            solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, features=features, data=data, sharing= {
+				        "access": "private",
+				        "groups": groups
+					        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
 
     # All other item types
     else:
-        if solution_item['type'] in TEXT_BASED_ITEM_TYPES:
-            item_definition['data'] = solution_item.get_data()
-            solution_definition.append(TextItem(solution_item, data=solution_item.get_data(), sharing={
-			"access": "private",
-			"groups": groups
-			    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
-        else:
-            solution_definition.append(Item(solution_item, data=None, sharing={
-			"access": "private",
-			"groups": groups
-			    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+        if not deployed_item:
+            if solution_item['type'] in TEXT_BASED_ITEM_TYPES:
+                item_definition['data'] = solution_item.get_data()
+                solution_definition.append(TextItem(solution_item, data=solution_item.get_data(), sharing={
+			    "access": "private",
+			    "groups": groups
+			        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+            else:
+                solution_definition.append(Item(solution_item, data=None, sharing={
+			    "access": "private",
+			    "groups": groups
+			        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
 
 def _get_solution_definition_local(source_directory, solution, solution_definition, deployed_items, copy_features):
     """Get the definition of the solution. This may be made up of multiple items and groups.
