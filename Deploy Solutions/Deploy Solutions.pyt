@@ -1152,7 +1152,11 @@ class FeatureServiceItem(TextItem):
                     layer['extent'] = extent['web_mercator']
             
             # Add the layer and table definitions to the service
-            feature_service_admin.add_to_definition(layers_definition)
+            # Explicitly add layers first and then tables, otherwise sometimes json.dumps() reverses them and this effects the output service
+            if len(layers_definition['layers']) > 0:
+                feature_service_admin.add_to_definition({'layers' : layers_definition['layers']})
+            if len(layers_definition['tables']) > 0:
+                feature_service_admin.add_to_definition({'tables' : layers_definition['tables']})
 
             # Create a lookup for the layers and tables using their id
             layers = { layer.properties['id'] : layer for layer in feature_service.layers + feature_service.tables }
