@@ -17,10 +17,6 @@
  """
 import arcpy, json, uuid, re, tempfile, os, copy, io, gzip, webbrowser
 from arcgis import gis, lyr
-from urllib.request import urlopen as urlopen
-from urllib.request import Request as request
-from urllib.parse import urlencode as encode
-from urllib.parse import urlparse as parse
 
 PORTAL_ID = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
 TAG = 'one.click.solution'
@@ -656,16 +652,13 @@ class UpdateDomainTool(object):
             domain = {'type': 'range', 'name' : name, 'range' : range_values}
     
         try:
-            admin_url = _get_admin_url(parameters[0])
-            if admin_url == "Invalid URL":
+            feature_layer = _get_feature_layer(parameters[0])
+            if feature_layer == "Invalid URL":
                 raise Exception("Input layer or table is not a hosted feature service")
-            elif admin_url == "Failed To Connect":
+            elif feature_layer == "Failed To Connect":
                 raise Exception("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
-            token = arcpy.GetSigninToken()
-            request_parameters = {'f' : 'json', 'token' : token['token'], 'async' : False}
             update_defintion = {'fields' : [{'name' : field.name, 'domain' : domain}]}
-            request_parameters['updateDefinition'] = json.dumps(update_defintion)
-            resp = _url_request(admin_url + "/updateDefinition", request_parameters, token['referer'], request_type='POST')
+            feature_layer.admin.update_definition(update_defintion)
         except Exception as e:
             arcpy.AddError("Failed to update domain: {0}".format(str(e)))
 
@@ -746,16 +739,13 @@ class AlterFieldAliasTool(object):
         parameters[3].value = ''
     
         try:
-            admin_url = _get_admin_url(parameters[0])
-            if admin_url == "Invalid URL":
+            feature_layer = _get_feature_layer(parameters[0])
+            if feature_layer == "Invalid URL":
                 raise Exception("Input layer or table is not a hosted feature service")
-            elif admin_url == "Failed To Connect":
+            elif feature_layer == "Failed To Connect":
                 raise Exception("Unable to connect to the hosted feature service. Ensure that this service is hosted in the active portal and that you are signed in as the owner.")
-            token = arcpy.GetSigninToken()
-            request_parameters = {'f' : 'json', 'token' : token['token'], 'async' : False}
             update_defintion = {'fields' : [{'name' : field.name, 'alias' : alias}]}
-            request_parameters['updateDefinition'] = json.dumps(update_defintion)
-            resp = _url_request(admin_url + "/updateDefinition", request_parameters, token['referer'], request_type='POST')
+            feature_layer.admin.update_definition(update_defintion)
         except Exception as e:
             arcpy.AddError("Failed to alter alias: {0}".format(str(e)))
 
@@ -1087,9 +1077,9 @@ class FeatureServiceItem(TextItem):
     """
 
     def __init__(self, info, service_definition, layers_definition, features=None, data=None, sharing=None, thumbnail=None, portal_item=None):
-        self._service_definition = json.loads(json.dumps(service_definition))
-        self._layers_definition = json.loads(json.dumps(layers_definition))
-        self.features = features
+        self._service_definition = service_definition
+        self._layers_definition = layers_definition
+        self._features = features
         super(TextItem, self).__init__(info, data, sharing, thumbnail, portal_item)
 
     @property
@@ -1099,6 +1089,10 @@ class FeatureServiceItem(TextItem):
     @property
     def layers_definition(self):
         return copy.deepcopy(self._layers_definition)
+
+    @property
+    def features(self):
+        return copy.deepcopy(self._features)
 
     def clone(self, connection, group_mapping, extent, folder=None):
         """Clone the feature service in the target organization.
@@ -1116,23 +1110,24 @@ class FeatureServiceItem(TextItem):
             # Get the definition of the original feature service
             service_definition = self.service_definition
 
-            # Create a new service from the definition of the original feature service
-            for key in ['layers', 'tables', 'spatialReference', 'initialExtent', 'fullExtent', 'size']:
-                if key in service_definition:
-                    del service_definition[key]     
-            service_definition['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
-            url = "{0}sharing/rest/content/users/{1}/".format(connection['url'], connection['username'])
-            if folder:
-                url += "{0}/".format(folder['id'])
-            url += 'createService'
-            request_parameters = {'f' : 'json', 'createParameters' : json.dumps(service_definition), 
-                                  'outputType' : 'featureService', 'token' : connection['token']}
-            resp = _url_request(url, request_parameters, connection['referer'], 'POST')
-            new_item = target.content.get(resp['itemId'])        
+            # Create a new feature service
+            name = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
+            new_item = target.content.create_service(name, service_type='featureService', folder=folder['id'])
     
-            # Get the layer and table definitions from the original service
-            layers_definition = self.layers_definition
+            # Update the new service using the definition of the original feature service
+            for key in ['layers', 'tables']:
+                if key in service_definition:
+                    del service_definition[key]
+            service_definition['initialExtent'] = extent['web_mercator']
+            service_definition['spatialReference'] = 	{ "spatialReference" : {
+		                                    "wkid" : 102100, "latestWkid" : 3857}}
+                    
+            feature_service = lyr.FeatureService.fromitem(new_item)
+            feature_service_admin = feature_service.admin
+            feature_service_admin.update_definition(service_definition) 
 
+            # Get the layer and table definitions from the original service and prepare them for the new service
+            layers_definition = self.layers_definition
             relationships = {} 
             for layer in layers_definition['layers'] + layers_definition['tables']:
                 # Need to remove relationships first and add them back individually 
@@ -1153,40 +1148,34 @@ class FeatureServiceItem(TextItem):
                             unique_fields.append(fields)
                 
                 # Set the extent of the feature layer to the specified default extent in web mercator
-                layer['extent'] = extent['web_mercator']
+                if layer['type'] == 'Feature Layer':
+                    layer['extent'] = extent['web_mercator']
+            
+            # Add the layer and table definitions to the service
+            feature_service_admin.add_to_definition(layers_definition)
 
-            # Layers needs to come before Tables or it effects the output service
-            definition = json.dumps(layers_definition, sort_keys=True) 
-            new_fs_url = new_item.url
-
-            # Add the layer and table defintions to the service
-            find_string = "/rest/services"
-            index = new_fs_url.find(find_string)
-            admin_url = '{0}/rest/admin/services{1}/addToDefinition'.format(new_fs_url[:index], new_fs_url[index + len(find_string):])
-            request_parameters = {'f' : 'json', 'addToDefinition' : definition, 'token' : connection['token']}
-            _url_request(admin_url, request_parameters, connection['referer'], 'POST')
+            # Create a lookup for the layers and tables using their id
+            layers = { layer.properties['id'] : layer for layer in feature_service.layers + feature_service.tables }
 
             # Add any releationship defintions back to the layers and tables
             for id in relationships:
-                relationships_param = {'relationships' : relationships[id]}
-                request_parameters = {'f' : 'json', 'addToDefinition' : json.dumps(relationships_param), 'token' : connection['token']}
-                admin_url = '{0}/rest/admin/services{1}/{2}/addToDefinition'.format(new_fs_url[:index], new_fs_url[index + len(find_string):], id)
-                _url_request(admin_url, request_parameters, connection['referer'], 'POST')
+                layer = layers[id]
+                layer.admin.add_to_definition({'relationships' : relationships[id]})
 
             # Update the item definition of the service
             item_properties = self._get_item_properties()
             item_properties['extent'] = extent['wgs84']
             item_properties['text'] = self.data
-
             new_item.update(item_properties=item_properties, thumbnail=self.thumbnail)
     
             # Copy features from original item
-            if self.features:
-                for layer in new_item.layers + new_item.tables:
-                    features = self.features[str(layer.properties['id'])]
+            features = self.features          
+            if features:                                 
+                for id in layers:
+                    layer_features = features[str(id)]
                     chunk_size = 2000
-                    for features_chunk in [features[i:i+chunk_size] for i in range(0, len(features), chunk_size)]:
-                        layer.edit_features(adds=features_chunk)
+                    for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
+                        layers[id].edit_features(adds=features_chunk)
                         
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1208,10 +1197,11 @@ class FeatureServiceItem(TextItem):
         with open(featureserver_json, 'w') as file:
             file.write(json.dumps({'serviceDefinition' : self._service_definition, 'layersDefinition' : self._layers_definition}))
 
-        if self.features:
+        features = self.features
+        if features:
             features_json = os.path.join(esriinfo_directory, "features.json")
             with open(features_json, 'w') as file:
-                file.write(json.dumps(self.features))  
+                file.write(json.dumps(features))  
 
         return item_directory
 
@@ -1476,19 +1466,15 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
     # If the item is a feature service get the definition of the service and its layers and tables
     elif solution_item['type'] == 'Feature Service':
         if not cached_item:
-            url = solution_item['url']
-            svc = lyr.Service(url, source)
-            service_definition = svc.definition
-
-            # Need to serialize the item before getting the layer definitions
-            iteminfo = json.loads(json.dumps(solution_item))
+            svc = lyr.FeatureService.fromitem(solution_item)
+            service_definition = dict(svc.properties)
 
             # Get the defintions of the the layers and tables
             layers_definition = { 'layers' : [], 'tables' : [] }
-            for layer in solution_item.layers:
-                layers_definition['layers'].append(layer.properties)
-            for table in solution_item.tables:
-                layers_definition['tables'].append(table.properties)
+            for layer in svc.layers:
+                layers_definition['layers'].append(dict(layer.properties))
+            for table in svc.tables:
+                layers_definition['tables'].append(dict(table.properties))
         
             # Get the data associated with the item 
             data = solution_item.get_data()     
@@ -1497,10 +1483,10 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
             features = None
             if copy_features:
                 features = {}
-                for layer in solution_item.layers + solution_item.tables:
+                for layer in svc.layers + svc.tables:
                     features[str(layer.properties['id'])] = _get_features(layer)
 
-            solution_definition.append(FeatureServiceItem(iteminfo, service_definition, layers_definition, features=features, data=data, sharing= {
+            solution_definition.append(FeatureServiceItem(solution_item, service_definition, layers_definition, features=features, data=data, sharing= {
 				        "access": "private",
 				        "groups": groups
 					        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
@@ -1643,7 +1629,7 @@ def _get_features(feature_layer):
         max_record_count = 1000
     offset = 0
     while offset < record_count:
-        features = feature_layer.query(as_json=True, outSR=102100, resultOffset=offset, resultRecordCount=max_record_count)['features']
+        features = feature_layer.query(as_dict=True, outSR=102100, resultOffset=offset, resultRecordCount=max_record_count)['features']
         offset += len(features)
         total_features += features
     return total_features
@@ -1945,97 +1931,44 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
 
 #region Tools and Validation Helpers
 
-def _url_request(url, request_parameters, referer=None, request_type='GET', repeat=0, raise_on_failure=True):
-    """Send a new request and format the json response.
-    Keyword arguments:
-    url - the url of the request
-    request_parameters - a dictionay containing the name of the parameter and its correspoinsding value
-    request_type - the type of request: 'GET', 'POST'
-    repeat - the nuber of times to repeat the request in the case of a failure
-    error_text - the message to log if an error is returned
-    raise_on_failure - indicates if an exception should be raised if an error is returned and repeat is 0"""
-    if request_type == 'GET':
-        req = request('?'.join((url, encode(request_parameters))))
-    else:
-        headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',}
-        req = request(url, encode(request_parameters).encode('UTF-8'), headers)
-
-    req.add_header('Accept-encoding', 'gzip')
-    if referer is not None:
-        req.add_header('Referer', referer)
-
-    response = urlopen(req)
-
-    if response.info().get('Content-Encoding') == 'gzip':
-        buf = io.BytesIO(response.read())
-        with gzip.GzipFile(fileobj=buf) as gzip_file:
-            response_bytes = gzip_file.read()
-    else:
-        response_bytes = response.read()
-
-    response_text = response_bytes.decode('UTF-8')
-    response_json = json.loads(response_text)
-
-    if "error" in response_json:
-        if repeat == 0:
-            if raise_on_failure:
-                raise Exception(response_json)
-            return response_json
-
-        repeat -= 1
-        time.sleep(2)
-        response_json = self._url_request(
-            url, request_parameters, referer, request_type, repeat, raise_on_failure)
-
-    return response_json
-
 def _get_fields(parameter):
-    admin_url = _get_admin_url(parameter)
-    if admin_url in ["Invalid URL", "Failed To Connect"]:
-        return admin_url
+    feature_layer = _get_feature_layer(parameter)
 
-    try:      
-        token = arcpy.GetSigninToken()
-        request_parameters = {'f' : 'json', 'token' : token['token'] }
-        resp = _url_request(admin_url, request_parameters, token['referer'])
-        
-        if "serviceItemId" not in resp:
-            return "Failed To Connect"
+    if feature_layer in ["Invalid URL", "Failed To Connect"]:
+        return feature_layer
 
-        return json.dumps(resp['fields'])
-    except:
-        return "Failed To Connect"
+    return json.dumps(feature_layer.properties['fields'])
 
-def _get_admin_url(parameter):
+def _get_feature_layer(parameter):
     url = None
-    input = parameter.value
-    if type(input) == arcpy._mp.Layer: # Layer in the map
-        connection_props = input.connectionProperties
-        if connection_props['workspace_factory'] == 'FeatureService':
-            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
-    else:
-        input = parameter.valueAsText 
-        pieces = parse(input)
-        if pieces.scheme in ['http', 'https']: # URL
-            url = input
-        else: # Table in the map
-            prj = arcpy.mp.ArcGISProject('Current')
-            for map in prj.listMaps():
-                for table in map.listTables():
-                    if table.name == input:
-                        connection_props = table.connectionProperties
-                        if connection_props['workspace_factory'] == 'FeatureService':
-                            url = '{0}/{1}'.format(connection_props['connection_info']['url'], connection_props['dataset'])
-    if url is None:
+    desc = arcpy.Describe(parameter.value)
+    url = desc.path
+
+    if not url.endswith('/FeatureServer'):
         return "Invalid URL"
 
-    try:      
-        find_string = "/rest/services"
-        index = url.find(find_string)
-        if index == -1:
+    if url.startswith('GIS Servers\\'):
+        url = 'https://{0}'.format(url[len('GIS Servers\\'):])
+
+    try:
+        layer_id = int(desc.name)
+    except:
+        name = desc.name[1:]
+        layer_id = ''
+        for c in name:
+            if c in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+                layer_id += c
+            else:
+                break
+        layer_id = int(layer_id)
+
+    try:
+        feature_service = lyr.FeatureService(url, gis.GIS('pro'))
+        feature_layer = next((layer for layer in feature_service.layers + feature_service.tables if layer.properties['id'] == layer_id), None)
+        if not feature_layer or 'serviceItemId' not in feature_service.properties:
             return "Invalid URL"
         
-        return '{0}/rest/admin/services{1}'.format(url[:index], url[index + len(find_string):])
+        return feature_layer
     except:
         return "Failed To Connect"
 
