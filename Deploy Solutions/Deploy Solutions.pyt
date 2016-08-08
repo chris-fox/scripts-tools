@@ -18,7 +18,7 @@
 import arcpy, json, uuid, re, tempfile, os, copy, io, gzip, webbrowser
 from arcgis import gis, lyr
 
-PORTAL_ID = 'Pu6Fai10JE2L2xUd' #http://statelocaltryit.maps.arcgis.com/
+PORTAL_ID = 'WmoCHIxoWP90bCkH' #http://arcgissolutionsdeploymentdev.maps.arcgis.com/
 TAG = 'one.click.solution'
 TEXT_BASED_ITEM_TYPES = ['Web Map', 'Feature Service', 'Map Service', 'Operation View',
                                    'Image Service', 'Feature Collection', 'Feature Collection Template',
@@ -46,13 +46,20 @@ class DeploySolutionsTool(object):
 
     def getParameterInfo(self):
         param0 = arcpy.Parameter(
+            displayName="Industry",
+            name="industry",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param1 = arcpy.Parameter(
             displayName="Solution Group",
             name="solution_group",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
-        param1 = arcpy.Parameter(
+        param2 = arcpy.Parameter(
             displayName="Solutions",
             name="solutions",
             datatype="GPString",
@@ -60,36 +67,36 @@ class DeploySolutionsTool(object):
             direction="Input",
             multiValue=True)
 
-        param2 = arcpy.Parameter(
+        param3 = arcpy.Parameter(
             displayName="Extent",
             name="extent",
             datatype="GPExtent",
             parameterType="Optional",
             direction="Input")
 
-        param3 = arcpy.Parameter(
+        param4 = arcpy.Parameter(
             displayName="Copy Sample Data",
             name="copy_sample_data",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
-        param3.value = False
+        param4.value = False
 
-        param4 = arcpy.Parameter(
+        param5 = arcpy.Parameter(
             displayName="Folder",
             name="folder",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
-        param5 = arcpy.Parameter(
+        param6 = arcpy.Parameter(
             displayName="Validation JSON",
             name="validation_json",
             datatype="GPString",
-            parameterType="Derived",
-            direction="Output")
+            parameterType="Required",
+            direction="Input")
 
-        params = [param0, param1, param2, param3, param4, param5]
+        params = [param0, param1, param2, param3, param4, param5, param6]
         return params
 
     def isLicensed(self):
@@ -101,41 +108,58 @@ class DeploySolutionsTool(object):
         validation is performed.  This method is called whenever a parameter
         has been changed."""
         if not parameters[0].hasBeenValidated:
-            if not parameters[5].value:
+            if not parameters[6].value:
                 source = gis.GIS()
-                search_query = 'accountid:{0} AND tags:"{1}"'.format(PORTAL_ID, TAG)               
-                items = source.content.search(search_query, max_items=1000)
+                search_query = 'accountid:{0} AND tags:"{1}"'.format(PORTAL_ID, TAG)
+                groups = source.groups.search(search_query, outside_org=False)
                 solutions = {}
-                tag_prefix = 'solution.'
-                for item in items:
-                    solution_name = next((tag[len(tag_prefix):] for tag in item.tags if tag.startswith('solution.')), None)
-                    if solution_name is None:
-                        continue
-                    if solution_name not in solutions:
-                        solutions[solution_name] = []
-                    solutions[solution_name].append(item.title)
-                parameters[0].filter.list = sorted([solution_name for solution_name in solutions])
+                for group in groups:
+                    solutions[group['title']] = {'id' : group['id'], 'solution_groups' : None}
+                parameters[0].filter.list = sorted([group['title'] for group in groups])
 
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
-                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[5].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'solutions' : solutions, 'folders' : folders }
-                parameters[5].value = json.dumps(validation_json)
+                parameters[6].value = json.dumps(validation_json)
 
             if parameters[0].value:
-                validation_json = json.loads(parameters[5].valueAsText)  
-                solutions = validation_json['solutions']   
-                solution_name = parameters[0].valueAsText
-                parameters[1].filter.list = sorted([map_app for map_app in solutions[solution_name]])
-                parameters[1].value = arcpy.ValueTable()
+                validation_json = json.loads(parameters[6].value)
+                industry = parameters[0].valueAsText
+                if not validation_json['solutions'][industry]['solution_groups']:
+                    source = gis.GIS()
+                    search_query = 'group:{0}'.format(validation_json['solutions'][industry]['id'])
+                    items = source.content.search(search_query, max_items=1000)
+                    tag_prefix = 'solution.'
+                    solutions = {}
+                    for item in items:
+                        for solution_group in [tag[len(tag_prefix):] for tag in item.tags if tag.startswith('solution.')]:
+                            if solution_group not in solutions:
+                                solutions[solution_group] = []
+                            solutions[solution_group].append(item.title)
+                    parameters[1].filter.list = sorted([solution_group for solution_group in solutions])
+                    validation_json['solutions'][industry]['solution_groups'] = solutions
+                    parameters[6].value = json.dumps(validation_json)
+                else:
+                    parameters[1].filter.list = sorted([solution_group for solution_group in validation_json['solutions'][industry]['solution_groups']])
+            parameters[1].value = None
 
-        if not parameters[4].hasBeenValidated:
-            validation_json = json.loads(parameters[5].valueAsText)  
+        if parameters[0].value and not parameters[1].hasBeenValidated and parameters[1].value:
+            validation_json = json.loads(parameters[6].valueAsText)  
+            solutions = validation_json['solutions']
+            industry = parameters[0].valueAsText   
+            solution_group = parameters[1].valueAsText
+            items = solutions[industry]['solution_groups'][solution_group]
+            parameters[2].filter.list = sorted(items)
+            parameters[2].value = arcpy.ValueTable()
+
+        if not parameters[5].hasBeenValidated:
+            validation_json = json.loads(parameters[6].valueAsText)  
             folders = validation_json['folders']
-            if parameters[4].value:
-                parameters[4].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
+            if parameters[5].value:
+                parameters[5].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
             else:
-                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[5].filter.list = sorted([folder['title'] for folder in folders])
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
