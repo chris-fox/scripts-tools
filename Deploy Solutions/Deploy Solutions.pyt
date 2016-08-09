@@ -180,17 +180,18 @@ class DeploySolutionsTool(object):
 
         if connection:             
             # Get the input parameters for creating from local items on disk
-            solution_group = parameters[0].valueAsText
-            value_table = parameters[1].value
+            industry = parameters[0].valueAsText
+            solution_group = parameters[1].valueAsText
+            value_table = parameters[2].value
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
-            extent = _get_default_extent(parameters[2].value)
-            copy_features = parameters[3].value
-            output_folder = parameters[4].valueAsText
-            parameters[5].value = ''
+            extent = _get_default_extent(parameters[3].value)
+            copy_features = parameters[4].value
+            output_folder = parameters[5].valueAsText
+            parameters[6].value = ''
 
             # Clone the solutions
-            _create_solutions(connection, solution_group, solutions, extent, copy_features, output_folder)
+            _create_solutions(connection, industry, solutions, extent, copy_features, output_folder)
             return
 
 class DeploySolutionsLocalTool(object):
@@ -1780,11 +1781,11 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
             _add_message('Failed to download {0}: {1}'.format(solution, str(e)), 'Error')
             _add_message('------------------------')
 
-def _create_solutions(connection, solution_group, solutions, extent, copy_features, output_folder):
+def _create_solutions(connection, industry, solutions, extent, copy_features, output_folder):
     """Clone solutions into a new portal
     Keyword arguments:
     connection - Dictionary containing connection info to the target portal
-    solution_group - The name of the group of solutions
+    industry - The name of the group of solutions
     solutions - A list of solutions to be cloned into the portal
     extent - The default extent of the new maps and services in WGS84
     copy_features - A flag indicating if the data from the original feature services should be copied as well
@@ -1824,12 +1825,20 @@ def _create_solutions(connection, solution_group, solutions, extent, copy_featur
                 # Get the definitions of the items and groups that make up the solution
                 _get_solution_definition_local(source_directory, solution, solution_definition, cached_items, copy_features)
             else:
-                # Search for the map or app in the given organization using the map or app name and a specific tag
-                search_query = 'accountid:{0} AND tags:"{1},solution.{2}" AND title:"{3}"'.format(PORTAL_ID, TAG, solution_group, solution)
+                # Search for the industry group
+                search_query = 'accountid:{0} AND tags:"{1}" AND title:"{2}"'.format(PORTAL_ID, TAG, industry)
+                groups = source.groups.search(search_query)
+                if len(groups) == 0:
+                    _add_message("Failed to find group {0} in the source organization".format(industry), 'Error')
+                    _add_message('------------------------')
+                    continue
+
+                # Search for the solution the source organization within the industry group using the title of the item.
+                search_query = 'accountid:{0} AND group:"{1}" AND title:"{2}"'.format(PORTAL_ID, groups[0]['id'], solution)
                 items = source.content.search(search_query)
                 solution_item = next((item for item in items if item.title == solution), None)
                 if not solution_item:
-                    _add_message("Failed to find original item {0}".format(solution), 'Error')
+                    _add_message("Failed to find solution item {0}".format(solution), 'Error')
                     _add_message('------------------------')
                     continue
 
