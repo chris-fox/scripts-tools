@@ -93,8 +93,8 @@ class DeploySolutionsTool(object):
             displayName="Validation JSON",
             name="validation_json",
             datatype="GPString",
-            parameterType="Required",
-            direction="Input")
+            parameterType="Derived",
+            direction="Output")
 
         params = [param0, param1, param2, param3, param4, param5, param6]
         return params
@@ -1441,7 +1441,8 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
                             solution_definition.append(cached_group)
                         else:
                             group = source.groups.get(group_id)
-                            id = group.id # Bug, thumbnail is not returned properly unless we request another property from the object
+                            if not group:
+                                raise Exception("Failed to find group {0} in the source organization".format(group_id))
                             solution_definition.append(Group(group, thumbnail=group.get_thumbnail_link(), portal_group=group))
                     
                     search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
