@@ -13,65 +13,56 @@
 5. Go to https://github.com/ArcGIS/geosaurus and download or clone the repo
 6. Copy the contents of /src/arcgis and overwrite the contents of the arcgis package in your Pro 1.3 install location. By default this location would be C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\lib\site-packages\arcgis
     - Note: Users will not have to do step 5 and 6 when we release, we are just doing this because the beta version has bugs that have since been fixed so we want to use latest code.
-7. In ArcGIS Pro browse to the Solutions.tbx you downloaded from this repo and start using the tools
+7. In ArcGIS Pro browse to the Deploy Solutions.pyt you downloaded from this repo and start using the tools
 
 #Using the tools#
+##Clone Items##
+This tools is used to clone publically available items in arcgis online into your organization. The organization or portal that is used as the target to clone the map or app is determined by the active portal in the current session of Pro. You can manage the active portal or sign-in/out of the portal in the upper-right corner of the application. To use the tool:
+
+1. Ensure you are logged into the portal you wish to create the content in
+2. Enter the item id of the item you want to clone. Once you click out of the parameter a new row will be added and you can add additional item ids. If you are cloning a map or an app, you don't need to provide the id of the services or groups. They will automatically be cloned as well.
+3. Specify the output extent of the maps and apps
+    - Default will use the default extent defined in the target portal
+    - Alternatively select the extent of the current extent in the map, layer, or dataset
+4. Specify whether the data from any feature services should also be copied to the cloned feature service. 
+5. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
+    - Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
+6. Run the tool
+
+In addition, provided in the repo is a sample script, example.py, that shows how you can clone items through code. This could be useful in automating this process or if you need clone items that are not shared with everyone. The comments in the sample script show how to specify the source and target portals for cloning.
+
 ##Deploy Solutions Tool##
 This tool is used to clone an existing map or app into your organization. The organization or portal that is used as the target to clone the map or app is determined by the active portal in the current session of Pro. You can manage the active portal or sign-in/out of the portal in the upper-right corner of the application. To use the tool:
 
 1. Ensure you are logged into the portal you wish to create the content in
-2. Select the name of the solution containing the maps and apps you wish to create
-3. Select one or more of the map and apps
+2. Select the name of the industry
+2. Select the name of the group of solutions containing the solution you are interested in
+3. Select one or more of the solutions
 4. Specify the output extent of the maps and apps
     - Default will use the default extent defined in the target portal
     - Alternatively select the extent of the current extent in the map, layer, or dataset
-5. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
+5. Specify whether the data from any feature services should also be copied to the cloned feature service. 
+6. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
     - Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
-6. Run the tool
+7. Run the tool
 
 The tool should create all the services, groups, maps and apps needed for the selected solution.
 
 ###How to add your own maps/apps to the tool###
 
-This tool is only designed to work on solutions that are entirely hosted, ie the services, maps and apps are all hosted by the portal. The tool by default looks for maps and apps in the [state & local try it live org](http://statelocaltryit.maps.arcgis.com/) that contain specific tags.
-
-To modify which org to search for items with the specified tags, change the value of the PORTAL_ID variable in the Deploy Solution.pyt file to the ID of the organization that contains the items.
+This tool is only designed to work on solutions that are entirely hosted, ie the services, maps and apps are all hosted by the portal. The tool by default looks for maps and apps in the [solutions deployment org](#http://arcgissolutionsdeploymentdev.maps.arcgis.com/) that are shared with specific groups and contain specific tags.
 
 To add aditional maps and apps to the tool:
 
-1. Browse to the item in the org and add the following tags to the item:
-    - one.click.solution
-    - solution.*SolutionName* (Replace *SolutionName* with the name of the solution associated with the map or app. This is what is displayed in the first parameter of the tool. This is good when organizing a collection of maps and apps that work together, such as Manage Mosquito Populations which is composed of many maps and apps.)
+1. Browse to the item in the org and do the following. 
+    - Share the item with the industry group that the solution falls under, for example ArcGIS for Local Government. If the group for the industry doesn't already exist you can create a new group in the organization. The name of the group is what will show up in the list under the first parameter of the tool. Add the tag 'one.click.solution' to the group to signify that the group contains items that can be deployed with this Deploy Solutions Tool.
+    - Add the tag solution.*SolutionGroup* to the item (Replace *SolutionGroup* with the name of the group associated with the solution. This is what is displayed in the second parameter of the tool. This is good when organizing a collection of maps and apps that work together, such as Manage Mosquito Populations which is composed of many maps and apps.). You can repeat this tag with different group names if the solution item should appear under multiple groups.
 
-    Note: Only add these tags to final component of the solution. For example, if it is geoform application, just add the tag to the item associated with the geoform app. You don’t need to add the tags to the map or services that make up the app. If it is a collector map, just add the tags to the item for the collector map, etc.
+    Note: Only share the item and add tags to final component of the solution. For example, if it is geoform application, just share and add the tag to the item associated with the geoform app. You don’t need to add the tags to the map or services that make up the app. If it is a collector map, just add the tags to the item for the collector map, etc.
+    
 2. Open the tool, it should search the organization for the items with the tags and add them to the dropdowns in the parameters.
 
 ###Known-Issues###
-####Failed to create service####
-*'ExistingAddresses': {'error': {'code': 400, 'message': 'Unable to add feature service definition.', 'details': ["Column 'Shape' in table 'user_2461.ExistingAddresses_70fa36a3353641aeb9af86b49a6ec605_SITE_ADDRESS_POINTS' is of a type that is invalid for use as a key column in an index or statistics."]}}*
-
-If you receive an error like the one above this is due to a bug that occurs when the original service was published from ArcGIS 10.4 and Pro 1.2. The service contains some invalid index definitions and if you attempted to clone this service in arcgis.com it would also fail. Below are the steps to resolve this which require modifying the definition of the original service. If you are not comfortable with going through these steps, I can help out to get the service cleaned up.
-
-1. Go to the rest end point for the feature service sub layer (you would need to repeat this for every layer in the service)
-2. In the url add ‘admin’ between ‘rest’ and ‘services’ (ie rest/admin/services) and hit enter
-3. Scroll to the bottom and click the link “delete from definition”
-4. Search in the delete from layer definition dialog for ‘indexes’ and examine the current indexes looking for duplicate indexes, or indexes with name of FDO_OBJECTID or FDO_SHAPE.
-5. Clear out all the text in the delete from layer definition dialog and use the JSON example below to delete duplicate indexes from the service
-
-    ```
-    {
-      "indexes" : [
-      {
-        "name" : "FDO_OBJECTID"
-      },
-      {
-        "name" : "FDO_SHAPE" 
-      }
-    ]
-    }
-    ```
-6. Click Delete from Layer Definition
-
 ####Tool completes succesfully but no services created####
 This can happen depending on how the layers were added to the webmap. If the layer was added by opening a feature service item in a new web map, or by searching for a layer and adding it than everything should be fine. The problem occurs if a layer was added to the map via a URL to the service. Layers added this way don’t have an item id associated with them so I am not currently picking these up as items to clone.
 
@@ -107,6 +98,11 @@ This tool is used to add, remove, or update the domain for a field in a hosted f
 4. Change the alias of the field
 5. Run the tool
 
-##Add/Remove Field Tools##
+##Open Web Map Tool##
 
-These tools are the out of the box GP tools. They already work on Hosted Feature services so no custom code for these workflows was necessary.
+This tool to open the web map viewer for the specified web map. To use the tool:
+
+1. Ensure you are logged into the portal containing the web map you want to work with.
+2. Select the folder in your content containing the web map
+3. Select the web map
+4. Run the tool
