@@ -272,8 +272,8 @@ class CloneItemsTool(object):
             direction="Input")
 
         param2 = arcpy.Parameter(
-            displayName="Copy Sample Data",
-            name="copy_sample_data",
+            displayName="Copy Data",
+            name="copy_data",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
@@ -1281,13 +1281,22 @@ class ItemDefinition(object):
             item_properties = self._get_item_properties()
             if extent:
                 item_properties['extent'] = extent['wgs84']
-            item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 data = self.data
                 if not data and self.portal_item:
                     data = self.portal_item.download(temp_dir)
-                 
+                
+                # The item's name will default to the name of the data, if it already exists in the folder we need to rename it to something unique
+                name = os.path.basename(data)
+                item = next((item for item in target.users.me.items(folder['title']) if item['name'] == name), None)
+                if item:
+                    new_name = "{0}_{1}{2}".format(os.path.splitext(name)[0], str(uuid.uuid4()).replace('-',''), os.path.splitext(name)[1])
+                    new_path = os.path.join(temp_dir, new_name)
+                    os.rename(data, new_path)
+                    data = new_path
+
+                # Add the new item
                 new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=self.thumbnail, folder=folder['title'])
 
             # Share the item
@@ -1344,7 +1353,6 @@ class TextItemDefinition(ItemDefinition):
             item_properties = self._get_item_properties()
             if extent:
                 item_properties['extent'] = extent['wgs84']
-            item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
             item_properties['text'] = self.data
             new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
 
@@ -1703,7 +1711,6 @@ def get_item_defintion(item, copy_data=False):
     # For all other types get the corresponding definition
     else:
         if item['type'] in TEXT_BASED_ITEM_TYPES:
-            item_definition['data'] = item.get_data()
             return TextItemDefinition(dict(item), data=item.get_data(), thumbnail=item.get_thumbnail_link(), portal_item=item)
         else:
             return ItemDefinition(dict(item), data=None, thumbnail=item.get_thumbnail_link(), portal_item=item)
@@ -2079,7 +2086,7 @@ def clone_items(target, item_definitions, extent, folder_name):
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                   
-                new_item = item.clone(target, group_mapping, folder)
+                new_item = item.clone(target, extent, group_mapping, folder)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:

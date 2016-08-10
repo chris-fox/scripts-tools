@@ -40,12 +40,12 @@ if __name__ == "__main__":
                     print('Successfully cloned {0}'.format(item['title']))
                     print('------------------------')
             else:
-                print('Failed to clone {0}'.format(item['title']), 'Error')
+                print('Failed to clone {0}'.format(item['title']))
                 print('------------------------')
         
         except Exception as e:
             print(str(e), 'Error')
-            print('Failed to clone {0}'.format(item['title']), 'Error')
+            print('Failed to clone {0}'.format(item['title']))
             print('------------------------')
 
 
