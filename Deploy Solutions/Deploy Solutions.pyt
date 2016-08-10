@@ -1160,11 +1160,11 @@ class GroupDefinition(object):
             for tag in list(tags):
                 if tag.startswith("source-") or tag.startswith("sourcefolder-"):
                     tags.remove(tag)
-            tags = ','.join(original_group['tags'])
          
             original_group['tags'].append("source-{0}".format(original_group['id']))
             if linked_folder:
                 original_group['tags'].append("sourcefolder-{0}".format(linked_folder['id']))
+            tags = ','.join(original_group['tags'])
             
             #Find a unique name for the group
             i = 1    
@@ -1401,6 +1401,17 @@ class FeatureServiceDefinition(TextItemDefinition):
     def features(self):
         return copy.deepcopy(self._features)
 
+    def _add_features(self, layers, relationships):
+        # Copy features from original item
+        features = self.features          
+        if features:
+            chunk_size = 2000
+                                                 
+            for id in layers:
+                layer_features = features[str(id)]
+                for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
+                    layers[id].edit_features(adds=features_chunk)
+
     def clone(self, target, extent, group_mapping={}, folder=None):
         """Clone the feature service in the target organization.
         Keyword arguments:
@@ -1469,7 +1480,7 @@ class FeatureServiceDefinition(TextItemDefinition):
             # Create a lookup for the layers and tables using their id
             layers = { layer.properties['id'] : layer for layer in feature_service.layers + feature_service.tables }
 
-            # Add any releationship defintions back to the layers and tables
+            # Add any relationship definitions back to the layers and tables
             for id in relationships:
                 layer = layers[id]
                 layer.admin.add_to_definition({'relationships' : relationships[id]})
@@ -1481,14 +1492,8 @@ class FeatureServiceDefinition(TextItemDefinition):
             new_item.update(item_properties=item_properties, thumbnail=self.thumbnail)
     
             # Copy features from original item
-            features = self.features          
-            if features:                                 
-                for id in layers:
-                    layer_features = features[str(id)]
-                    chunk_size = 2000
-                    for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
-                        layers[id].edit_features(adds=features_chunk)
-                        
+            self._add_features(layers, relationships)
+
             # Share the item
             self._share_new_item(new_item, group_mapping)
 
@@ -1522,12 +1527,12 @@ class WebMapDefinition(TextItemDefinition):
     Represents the definition of a web map within ArcGIS Online or Portal.
     """
 
-    def clone(self, target, extent, group_mapping={}, service_mapping=[], folder=None):  
+    def clone(self, target, extent, group_mapping={}, service_mapping={}, folder=None):  
         """Clone the web map in the target organization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
         group_mapping - Dictionary containing the id of the original group and the id of the new group
-        service_mapping - A data structure that contains the mapping between the original service item and url and the new service item and url
+        service_mapping - Dictionary containing the mapping between the original service url and new service item id and url
         extent - Default extent of the new web map in WGS84
         folder - The folder to create the web map in"""
     
@@ -1539,25 +1544,21 @@ class WebMapDefinition(TextItemDefinition):
             item_properties = self._get_item_properties()
             item_properties['extent'] = extent['wgs84']
 
-            # Swizzle the item ids and URLs of the operational layers and tables in the web map
+            # Swizzle the item ids and URLs of the feature layers and tables in the web map
             webmap_json = self.data
-            for service in service_mapping:
-                url_pattern = re.compile(service[0][1], re.IGNORECASE)
-                if 'operationalLayers' in webmap_json:
-                    for layer in webmap_json['operationalLayers']:
-                        if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer":
-                            if 'itemId' in layer:
-                                if layer['itemId'].lower() == service[0][0]:
-                                    layer['itemId'] = service[1][0]
-                            if 'url' in layer:
-                                layer['url'] = url_pattern.sub(service[1][1], layer['url'])
-                if 'tables' in webmap_json:
-                    for table in webmap_json['tables']:
-                        if 'itemId' in table:
-                            if table['itemId'].lower() == service[0][0]:
-                                table['itemId'] = service[1][0]
-                        if 'url' in table:
-                            table['url'] = url_pattern.sub(service[1][1], table['url'])
+
+            layers = []
+            if 'operationalLayers' in webmap_json:
+                layers += [layer for layer in webmap_json['operationalLayers'] if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer" and 'url' in layer]
+            if 'tables' in webmap_json:
+                layers += [table for table in webmap_json['tables'] if 'url' in table]
+
+            for layer in layers:
+                feature_service_url = os.path.dirname(layer['url'])
+                if feature_service_url in service_mapping:
+                    layer_id = os.path.basename(layer['url'])
+                    layer['url'] = "{0}/{1}".format(service_mapping[feature_service_url]['url'], layer_id)
+                    layer['itemId'] = service_mapping[feature_service_url]['id']
 
             # Add the web map to the target portal
             item_properties['text'] = json.dumps(webmap_json)
@@ -1575,19 +1576,19 @@ class ApplicationDefinition(TextItemDefinition):
     Represents the definition of an application within ArcGIS Online or Portal.
     """
     
-    def clone(self, target, group_mapping={}, service_mapping=[], webmap_mapping={}, folder=None):
+    def clone(self, target, group_mapping={}, service_mapping={}, webmap_mapping={}, folder=None):
         """Clone the application in the target orgnaization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
         group_mapping - Dictionary containing the id of the original group and the id of the new group
-        service_mapping - A data structure that contains the mapping between the original service item and url and the new service item and url
+        service_mapping - Dictionary containing the mapping between the original service url and new service item id and url
         webmap_mapping - Dictionary containing a mapping between the original web map id and new web map id
         folder - The folder to create the application in"""  
     
         try:
             new_item = None
             original_item = self.info
-            url = target._portal.url
+            portal_url = target._portal.url
 
             # Get the item properties from the original application which will be applied when the new item is created
             item_properties = self._get_item_properties()
@@ -1598,20 +1599,20 @@ class ApplicationDefinition(TextItemDefinition):
 
             if "Web AppBuilder" in original_item['typeKeywords']: #Web AppBuilder
                 if 'portalUrl' in app_json:
-                    app_json['portalUrl'] = url
+                    app_json['portalUrl'] = portal_url
                 if 'map' in app_json:
                     if 'portalUrl' in app_json['map']:
-                        app_json['map']['portalUrl'] = url
+                        app_json['map']['portalUrl'] = portal_url
                     if 'itemId' in app_json['map']:
                         app_json['map']['itemId'] = webmap_mapping[app_json['map']['itemId']]
                 if 'httpProxy' in app_json:
                     if 'url' in app_json['httpProxy']:
-                        app_json['httpProxy']['url'] = url + "sharing/proxy"
+                        app_json['httpProxy']['url'] = portal_url + "sharing/proxy"
         
                 app_json_text = json.dumps(app_json)        
-                for service in service_mapping:
-                    url_pattern = re.compile(service[0][1], re.IGNORECASE)
-                    app_json_text = url_pattern.sub(service[1][1], app_json_text)
+                for service_url in service_mapping:
+                    url_pattern = re.compile(service_url, re.IGNORECASE)
+                    app_json_text = url_pattern.sub(service_mapping[service_url]['url'], app_json_text)
                 item_properties['text'] = app_json_text
 
             elif original_item['type'] == "Operation View": #Operations Dashboard
@@ -1638,7 +1639,7 @@ class ApplicationDefinition(TextItemDefinition):
             if original_item['url']:
                 find_string = "/apps/"
                 index = original_item['url'].find(find_string)
-                new_url = '{0}{1}'.format(url.rstrip('/'), original_item['url'][index:])
+                new_url = '{0}{1}'.format(portal_url.rstrip('/'), original_item['url'][index:])
                 find_string = "id="
                 index = new_url.find(find_string)
                 new_url = '{0}{1}'.format(new_url[:index + len(find_string)], new_item.id)
@@ -1774,6 +1775,9 @@ def get_item_definitions(source, item, item_definitions, cached_defintions=None,
                 if 'group' in app_json['values']:
                     group_id = app_json['values']['group']
                     group = source.groups.get(group_id)
+                    if not group:
+                        _add_message("Group {0} does not exist or is inaccessible.".format(group_id), 'Warning')
+                        return item_definition
                     get_item_definitions(source, group, item_definitions, cached_defintions, copy_data)
 
                 if 'webmap' in app_json['values']:
@@ -1781,6 +1785,9 @@ def get_item_definitions(source, item, item_definitions, cached_defintions=None,
         
         if webmap_id:
             webmap = source.content.get(webmap_id)
+            if not webmap:
+                _add_message("Web Map {0} does not exist or is inaccessible.".format(webmap_id), 'Warning')
+                return item_definition
             get_item_definitions(source, webmap, item_definitions, cached_defintions, copy_data)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
@@ -1790,19 +1797,26 @@ def get_item_definitions(source, item, item_definitions, cached_defintions=None,
         item_definitions.append(item_definition)
         
         webmap_json = item_definition.data
-        
-        if 'operationalLayers' in webmap_json:
-            for layer in webmap_json['operationalLayers']:
-                if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer":
-                    if 'itemId' in layer:
-                        feature_service = source.content.get(layer['itemId'])
-                        get_item_definitions(source, feature_service, item_definitions, cached_defintions, copy_data)
+        layers = []
 
+        if 'operationalLayers' in webmap_json:
+            layers += [layer for layer in webmap_json['operationalLayers'] if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer" and 'url' in layer]
         if 'tables' in webmap_json:
-            for table in webmap_json['tables']:
-                    if 'itemId' in table:
-                        feature_service = source.content.get(table['itemId'])
-                        get_item_definitions(source, feature_service, item_definitions, cached_defintions, copy_data)
+            layers += [table for table in webmap_json['tables'] if 'url' in table]
+
+        for layer in layers:
+            feature_service_url = os.path.dirname(layer['url'])
+            feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == feature_service_url), None)
+            if not feature_service:
+                service = lyr.FeatureService(feature_service_url, source)
+                if 'serviceItemId' not in service.properties:
+                    continue
+
+                feature_service = source.content.get(service.properties['serviceItemId'])
+                if not feature_service:
+                    _add_message("Feature Service {0} does not exist or is inaccessible.".format(layer['itemId']), 'Warning')
+                    continue
+                get_item_definitions(source, feature_service, item_definitions, cached_defintions, copy_data)
 
     # All other types we no longer need to recursively look for related items
     else:
@@ -2000,7 +2014,7 @@ def clone_items(target, item_definitions, extent, folder_name):
     folder_name - The name of the folder to clone the new items to. If the folder does not already exist it will be created.""" 
 
     group_mapping = {}   
-    service_mapping = []
+    service_mapping = {}
     webmap_mapping = {}
     created_items = []
 
@@ -2042,8 +2056,7 @@ def clone_items(target, item_definitions, extent, folder_name):
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
                 _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))        
-            service_mapping.append([(original_item['id'], original_item['url']),
-                                        (new_item['id'], new_item['url'])])
+            service_mapping[original_item['url']] = { 'id' : new_item['id'], 'url' : new_item['url'] }
             arcpy.SetProgressorPosition()
 
         # Clone the web maps

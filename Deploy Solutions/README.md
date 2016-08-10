@@ -62,12 +62,6 @@ To add aditional maps and apps to the tool:
     
 2. Open the tool, it should search the organization for the items with the tags and add them to the dropdowns in the parameters.
 
-###Known-Issues###
-####Tool completes succesfully but no services created####
-This can happen depending on how the layers were added to the webmap. If the layer was added by opening a feature service item in a new web map, or by searching for a layer and adding it than everything should be fine. The problem occurs if a layer was added to the map via a URL to the service. Layers added this way don’t have an item id associated with them so I am not currently picking these up as items to clone.
-
-I am interested to see how many maps this effects and then we can decide the best way to resolve this. It is a pretty easy fix to the webmap json if it isn’t many maps.
-
 ##Update Domains Tool##
 
 This tool is used to add, remove, or update the domain for a field in a hosted feature service. To use the tool:
