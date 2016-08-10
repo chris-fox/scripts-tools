@@ -15,7 +15,7 @@
  | limitations under the License.
  ------------------------------------------------------------------------------
  """
-import arcpy, json, uuid, re, tempfile, os, copy, io, gzip, webbrowser
+import arcpy, json, uuid, re, tempfile, os, copy, webbrowser
 from arcgis import gis, lyr
 
 PORTAL_ID = 'WmoCHIxoWP90bCkH' #http://arcgissolutionsdeploymentdev.maps.arcgis.com/
@@ -34,7 +34,7 @@ class Toolbox(object):
         self.alias = "solutions"
 
         # List of tool classes associated with this toolbox
-        self.tools = [DeploySolutionsTool, DeploySolutionsLocalTool, DownloadSolutionsTool, 
+        self.tools = [DeploySolutionsTool, CloneItemsTool, DeploySolutionsLocalTool, DownloadSolutionsTool, 
                       UpdateDomainTool, AlterFieldAliasTool, OpenWebMap]
 
 class DeploySolutionsTool(object):
@@ -157,7 +157,7 @@ class DeploySolutionsTool(object):
             validation_json = json.loads(parameters[6].valueAsText)  
             folders = validation_json['folders']
             if parameters[5].value:
-                parameters[5].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
+                parameters[5].filter.list = sorted(set([parameters[5].valueAsText] + [folder['title'] for folder in folders]))
             else:
                 parameters[5].filter.list = sorted([folder['title'] for folder in folders])
 
@@ -167,32 +167,241 @@ class DeploySolutionsTool(object):
         return
 
     def execute(self, parameters, messages):
-        connection = None
+        target = None
         try:
             # Setup the target portal using the active portal within Pro
             target = gis.GIS('pro')
-            token = arcpy.GetSigninToken()
-            connection = {'target' : target, 'url' : arcpy.GetActivePortalURL(), 
-                          'username' : target.users.me.username, 
-                          'token' : token['token'], 'referer' : token['referer'], 'local' : False }
         except Except:
             arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
 
-        if connection:             
-            # Get the input parameters for creating from local items on disk
-            industry = parameters[0].valueAsText
-            solution_group = parameters[1].valueAsText
-            value_table = parameters[2].value
-            solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
-            solutions = sorted(list(set(solutions)))
-            extent = _get_default_extent(parameters[3].value)
-            copy_features = parameters[4].value
-            output_folder = parameters[5].valueAsText
-            parameters[6].value = ''
+        if not target:
+            return             
+        
+        source = gis.GIS()
 
-            # Clone the solutions
-            _create_solutions(connection, industry, solutions, extent, copy_features, output_folder)
-            return
+        # Get the input parameters for creating from local items on disk
+        industry = parameters[0].valueAsText
+        solution_group = parameters[1].valueAsText
+        value_table = parameters[2].value
+        solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
+        solutions = list(set(solutions))
+        extent = _get_default_extent(parameters[3].value)
+        copy_data = parameters[4].value
+        output_folder = parameters[5].valueAsText
+        parameters[6].value = ''
+
+        # If the folder does not already exist create a new folder
+        current_user = target.users.me
+        folders = current_user.folders
+        folder = next((folder for folder in folders if folder['title'] == output_folder), None)
+        if not folder:
+            folder = target.content.create_folder(output_folder)
+    
+        cached_items = []
+
+        for solution in solutions:
+            try:
+                deploy_message = 'Deploying {0}'.format(solution)
+                _add_message(deploy_message)
+                arcpy.SetProgressor('default', deploy_message)                           
+
+                # Search for the industry group
+                search_query = 'accountid:{0} AND tags:"{1}" AND title:"{2}"'.format(PORTAL_ID, TAG, industry)
+                groups = source.groups.search(search_query)
+                if len(groups) == 0:
+                    _add_message("Failed to find group {0} in the source organization".format(industry), 'Error')
+                    _add_message('------------------------')
+                    continue
+
+                # Search for the solution the source organization within the industry group using the title of the item.
+                search_query = 'accountid:{0} AND group:"{1}" AND title:"{2}"'.format(PORTAL_ID, groups[0]['id'], solution)
+                items = source.content.search(search_query)
+                solution_item = next((item for item in items if item.title == solution), None)
+                if not solution_item:
+                    _add_message("Failed to find solution item {0}".format(solution), 'Error')
+                    _add_message('------------------------')
+                    continue
+
+                # Check if the item has already been cloned into the target portal and if so, continue on to the next map or app.
+                folder_items = target.users.me.items(folder['title'])
+                existing_item = _get_existing_item(solution_item, folder_items)
+                if existing_item:
+                    _add_message("{0} already exists in {1} folder".format(solution_item.title, folder['title']))
+                    _add_message('------------------------')
+                    continue
+
+                # Get the definitions of the items and groups that make up the solution
+                item_definitions = []  
+                _get_item_definitions_recursive(source, solution_item, item_definitions, cached_items, copy_data)
+
+                # Set the progressor
+                item_count = len(item_definitions)
+                arcpy.SetProgressor('step', deploy_message, 0, item_count, 1)
+
+                # Add the items to the cached list so they can be reused if items are reused in other solutions
+                cached_items = list(set(cached_items + item_definitions))
+
+                if _clone_items(target, item_definitions, extent, folder):
+                    _add_message('Successfully added {0}'.format(solution))
+                    _add_message('------------------------')
+                else:
+                    _add_message('Failed to add {0}'.format(solution), 'Error')
+                    _add_message('------------------------')
+
+            except Exception as e:
+                _add_message(str(e), 'Error')
+                _add_message('Failed to add {0}'.format(solution), 'Error')
+                _add_message('------------------------')
+
+class CloneItemsTool(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Clone Items"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        param0 = arcpy.Parameter(
+            displayName="Items",
+            name="items",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input",
+            multiValue=True)
+
+        param1 = arcpy.Parameter(
+            displayName="Extent",
+            name="extent",
+            datatype="GPExtent",
+            parameterType="Optional",
+            direction="Input")
+
+        param2 = arcpy.Parameter(
+            displayName="Copy Sample Data",
+            name="copy_sample_data",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param2.value = False
+
+        param3 = arcpy.Parameter(
+            displayName="Folder",
+            name="folder",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+
+        param4 = arcpy.Parameter(
+            displayName="Validation JSON",
+            name="validation_json",
+            datatype="GPString",
+            parameterType="Derived",
+            direction="Output")
+
+        params = [param0, param1, param2, param3, param4]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if not parameters[0].hasBeenValidated:
+            if not parameters[4].value:
+                target = gis.GIS('pro')
+                folders = target.users.me.folders
+                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+                validation_json =  { 'folders' : folders }
+                parameters[4].value = json.dumps(validation_json)
+
+        if not parameters[3].hasBeenValidated:
+            validation_json = json.loads(parameters[4].valueAsText)  
+            folders = validation_json['folders']
+            if parameters[3].value:
+                parameters[3].filter.list = sorted(set([parameters[3].valueAsText] + [folder['title'] for folder in folders]))
+            else:
+                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            # Setup the target portal using the active portal within Pro
+            target = gis.GIS('pro')
+        except Except:
+            arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
+        
+        if not target:
+            return             
+        
+        source = gis.GIS()
+
+        # Get the input parameters
+        value_table = parameters[0].value
+        items = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
+        items = list(set(items))
+        extent = _get_default_extent(parameters[1].value)
+        copy_data = parameters[2].value
+        output_folder = parameters[3].valueAsText
+        parameters[4].value = ''
+
+        # If the folder does not already exist create a new folder
+        current_user = target.users.me
+        folders = current_user.folders
+        folder = next((folder for folder in folders if folder['title'] == output_folder), None)
+        if not folder:
+            folder = target.content.create_folder(output_folder)
+    
+        cached_items = []
+
+        for item_id in items:
+            try:
+                item = source.content.get(item_id)
+                if item is None:
+                    _add_message("Failed to find item {0}, ensure it is shared with everyone".format(item_id))
+                    _add_message('------------------------')
+                    continue
+
+                deploy_message = 'Cloning {0}'.format(item['title'])
+                _add_message(deploy_message)
+                arcpy.SetProgressor('default', deploy_message)                           
+
+                # Check if the item has already been cloned into the target portal and if so, continue on to the next map or app.
+                folder_items = target.users.me.items(folder['title'])
+                existing_item = _get_existing_item(item, folder_items)
+                if existing_item:
+                    _add_message("{0} already exists in {1} folder".format(item['title'], folder['title']))
+                    _add_message('------------------------')
+                    continue
+
+                # Get the definitions of the items and groups that make up the solution
+                item_definitions = []  
+                _get_item_definitions_recursive(source, item, item_definitions, cached_items, copy_data)
+
+                # Set the progressor
+                item_count = len(item_definitions)
+                arcpy.SetProgressor('step', deploy_message, 0, item_count, 1)
+
+                # Add the items to the cached list so they can be reused if items are reused in other solutions
+                cached_items = list(set(cached_items + item_definitions))
+
+                if _clone_items(target, item_definitions, extent, folder):
+                    _add_message('Successfully cloned {0}'.format(item['title']))
+                    _add_message('------------------------')
+                else:
+                    _add_message('Failed to clone {0}'.format(item['title']), 'Error')
+                    _add_message('------------------------')
+
+            except Exception as e:
+                _add_message(str(e), 'Error')
+                _add_message('Failed to clone {0}'.format(item['title']), 'Error')
+                _add_message('------------------------')
 
 class DeploySolutionsLocalTool(object):
     def __init__(self):
@@ -327,7 +536,7 @@ class DeploySolutionsLocalTool(object):
             parameters[6].value = ''
                             
             # Clone the solutions
-            _create_solutions(connection, solution_group, solutions, extent, copy_features, output_folder)
+            _clone_items(connection, solution_group, solutions, extent, copy_features, output_folder)
             return
 
 class DownloadSolutionsTool(object):
@@ -426,17 +635,17 @@ class DownloadSolutionsTool(object):
         except Except:
             arcpy.AddError("Unable to connect to the active portal. Please ensure you are logged into the active portal and that it is the portal you wish to deploy the maps and apps to.")
 
-        if connection:             
-            # Download the items
-            solution_group = parameters[0].valueAsText
-            value_table = parameters[1].value
-            solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
-            solutions = sorted(list(set(solutions)))
-            copy_features = parameters[2].value
-            output_directory = parameters[3].valueAsText
-            parameters[4].value = ''
-            _download_solutions(connection, solution_group, solutions, copy_features, output_directory)
-            return
+        if not connection:
+            return             
+        
+        solution_group = parameters[0].valueAsText
+        value_table = parameters[1].value
+        solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
+        solutions = sorted(list(set(solutions)))
+        copy_features = parameters[2].value
+        output_directory = parameters[3].valueAsText
+        parameters[4].value = ''
+        _download_items(connection, solution_group, solutions, copy_features, output_directory)
 
 class UpdateDomainTool(object):
     def __init__(self):
@@ -870,9 +1079,9 @@ class OpenWebMap(object):
 
 #endregion
 
-#region Solution Deployment and Download
+#region Group and Item Definition Classes
 
-class Group(object):
+class GroupDefinition(object):
     """
     Represents the definition of a group within ArcGIS Online or Portal.
     """
@@ -882,7 +1091,7 @@ class Group(object):
         self.thumbnail = thumbnail
         self.portal_group = portal_group
 
-    def clone(self, connection, linked_folder=None):
+    def clone(self, target, linked_folder=None):
         """Clone the group in the target organization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
@@ -890,21 +1099,25 @@ class Group(object):
     
         try:
             new_group = None
-            target = connection['target']
             original_group = self.info
-        
+            
             title = original_group['title']
+            tags = original_group['tags']
+            for tag in list(tags):
+                if tag.startswith("source-") or tag.startswith("sourcefolder-"):
+                    tags.remove(tag)
+            tags = ','.join(original_group['tags'])
+         
             original_group['tags'].append("source-{0}".format(original_group['id']))
             if linked_folder:
                 original_group['tags'].append("sourcefolder-{0}".format(linked_folder['id']))
-            tags = ','.join(original_group['tags'])
-    
+            
             #Find a unique name for the group
             i = 1    
             while True:
-                search_query = 'owner:{0} AND title:"{1}"'.format(connection['username'], title)
-                groups = target.groups.search(search_query, outside_org=False)
-                if len(groups) == 0:
+                search_query = 'title:"{0}"'.format(title)
+                groups = [group for group in target.groups.search(search_query, outside_org=False) if group['title'] == title]
+                if len(groups) == 0 :
                     break
                 i += 1
                 title = "{0} {1}".format(original_group['title'], i)
@@ -941,15 +1154,20 @@ class Group(object):
 
         return group_directory
 
-class Item(object):
+class ItemDefinition(object):
     """
     Represents the definition of an item within ArcGIS Online or Portal.
     """
 
     def __init__(self, info, data=None, sharing=None, thumbnail=None, portal_item=None):
         self.info = info
-        self._data = data      
+        self._data = data    
         self.sharing = sharing
+        if not self.sharing:
+            self.sharing = {
+				"access": "private",
+				"groups": []
+					}
         self.thumbnail = thumbnail
         self._item_property_names = ['title', 'type', 'description', 
                           'snippet', 'tags', 'culture',
@@ -968,10 +1186,12 @@ class Item(object):
         for property_name in self._item_property_names:
             item_properties[property_name] = self.info[property_name]
 
-        item_properties['typeKeywords'].append("source-{0}".format(self.info['id']))
-        if TAG in item_properties['tags']:
-            item_properties['tags'].remove(TAG)
-            item_properties['typeKeywords'].append(TAG)
+        typeKeywords = item_properties['typeKeywords']
+        for keyword in list(typeKeywords):
+            if keyword.startswith("source-"):
+                typeKeywords.remove(keyword)
+
+        typeKeywords.append("source-{0}".format(self.info['id']))
         item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
         item_properties['tags'] = ','.join(item_properties['tags'])
 
@@ -992,7 +1212,7 @@ class Item(object):
                     groups.append(group_mapping[group])
             new_item.share(everyone, org, ','.join(groups))
 
-    def clone(self, connection, group_mapping, folder=None):  
+    def clone(self, target, extent=None, group_mapping={}, folder=None):  
         """Clone the item in the target organization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
@@ -1002,11 +1222,11 @@ class Item(object):
         try:
             new_item = None
             original_item = self.info
-            target = connection['target']
         
             # Get the item properties from the original item to be applied when the new item is created
             item_properties = self._get_item_properties()
-            item_properties['extent'] = extent['wgs84']
+            if extent:
+                item_properties['extent'] = extent['wgs84']
             item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
 
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -1050,12 +1270,12 @@ class Item(object):
 
         return item_directory
 
-class TextItem(Item):
+class TextItemDefinition(ItemDefinition):
     """
     Represents the definition of a text based item within ArcGIS Online or Portal.
     """
 
-    def clone(self, connection, group_mapping, folder=None):  
+    def clone(self, target, extent=None, group_mapping={}, folder=None):  
         """Clone the item in the target organization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
@@ -1065,11 +1285,11 @@ class TextItem(Item):
         try:
             new_item = None
             original_item = self.info
-            target = connection['target']
         
             # Get the item properties from the original item to be applied when the new item is created
             item_properties = self._get_item_properties()
-            item_properties['extent'] = extent['wgs84']
+            if extent:
+                item_properties['extent'] = extent['wgs84']
             item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
             item_properties['text'] = self.data
             new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
@@ -1085,7 +1305,7 @@ class TextItem(Item):
         """Write the definition of the item to a local directory.
         Keyword arguments:
         items_directory - The items directory containing the definitions of the groups and items"""
-        item_directory = Item.write(self, items_directory)
+        item_directory = ItemDefinition.write(self, items_directory)
         if not item_directory:
             return None
 
@@ -1096,7 +1316,7 @@ class TextItem(Item):
 
         return item_directory
 
-class FeatureServiceItem(TextItem):
+class FeatureServiceDefinition(TextItemDefinition):
     """
     Represents the definition of a hosted feature service within ArcGIS Online or Portal.
     """
@@ -1105,7 +1325,7 @@ class FeatureServiceItem(TextItem):
         self._service_definition = service_definition
         self._layers_definition = layers_definition
         self._features = features
-        super(TextItem, self).__init__(info, data, sharing, thumbnail, portal_item)
+        super(TextItemDefinition, self).__init__(info, data, sharing, thumbnail, portal_item)
 
     @property
     def service_definition(self):
@@ -1119,7 +1339,7 @@ class FeatureServiceItem(TextItem):
     def features(self):
         return copy.deepcopy(self._features)
 
-    def clone(self, connection, group_mapping, extent, folder=None):
+    def clone(self, target, extent, group_mapping={}, folder=None):
         """Clone the feature service in the target organization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
@@ -1130,13 +1350,14 @@ class FeatureServiceItem(TextItem):
         try:
             new_item = None
             original_item = self.info
-            target = connection['target']       
 
             # Get the definition of the original feature service
             service_definition = self.service_definition
 
             # Create a new feature service
-            name = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
+            name = original_item['name']
+            if not target.content.is_service_name_available(name, 'featureService'):
+                name = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))       
             new_item = target.content.create_service(name, service_type='featureService', folder=folder['id'])
     
             # Update the new service using the definition of the original feature service
@@ -1217,7 +1438,7 @@ class FeatureServiceItem(TextItem):
         """Write the definition of the feature service to a local directory.
         Keyword arguments:
         items_directory - The items directory containing the definitions of the groups and items"""
-        item_directory = TextItem.write(self, items_directory)
+        item_directory = TextItemDefinition.write(self, items_directory)
         if not item_directory:
             return None
         esriinfo_directory = os.path.join(item_directory, 'esriinfo')
@@ -1234,12 +1455,12 @@ class FeatureServiceItem(TextItem):
 
         return item_directory
 
-class WebMapItem(TextItem):
+class WebMapDefinition(TextItemDefinition):
     """
     Represents the definition of a web map within ArcGIS Online or Portal.
     """
 
-    def clone(self, connection, group_mapping, service_mapping, extent, folder=None):  
+    def clone(self, target, extent, group_mapping={}, service_mapping=[], folder=None):  
         """Clone the web map in the target organization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
@@ -1251,12 +1472,10 @@ class WebMapItem(TextItem):
         try:
             new_item = None
             original_item = self.info
-            target = connection['target']
         
             # Get the item properties from the original web map which will be applied when the new item is created
             item_properties = self._get_item_properties()
             item_properties['extent'] = extent['wgs84']
-            item_properties['name'] = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))
 
             # Swizzle the item ids and URLs of the operational layers and tables in the web map
             webmap_json = self.data
@@ -1289,12 +1508,12 @@ class WebMapItem(TextItem):
         except Exception as e:
             raise ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(e)), new_item)
 
-class ApplicationItem(TextItem):
+class ApplicationDefinition(TextItemDefinition):
     """
     Represents the definition of an application within ArcGIS Online or Portal.
     """
     
-    def clone(self, connection, group_mapping, service_mapping, webmap_mapping, folder=None):
+    def clone(self, target, group_mapping={}, service_mapping=[], webmap_mapping={}, folder=None):
         """Clone the application in the target orgnaization.
         Keyword arguments:
         connection - Dictionary containing connection info to the target portal
@@ -1306,7 +1525,7 @@ class ApplicationItem(TextItem):
         try:
             new_item = None
             original_item = self.info
-            target = connection['target']
+            url = target._portal.url
 
             # Get the item properties from the original application which will be applied when the new item is created
             item_properties = self._get_item_properties()
@@ -1317,15 +1536,15 @@ class ApplicationItem(TextItem):
 
             if "Web AppBuilder" in original_item['typeKeywords']: #Web AppBuilder
                 if 'portalUrl' in app_json:
-                    app_json['portalUrl'] = connection['url']
+                    app_json['portalUrl'] = url
                 if 'map' in app_json:
                     if 'portalUrl' in app_json['map']:
-                        app_json['map']['portalUrl'] = connection['url']
+                        app_json['map']['portalUrl'] = url
                     if 'itemId' in app_json['map']:
                         app_json['map']['itemId'] = webmap_mapping[app_json['map']['itemId']]
                 if 'httpProxy' in app_json:
                     if 'url' in app_json['httpProxy']:
-                        app_json['httpProxy']['url'] = connection['url'] + "sharing/proxy"
+                        app_json['httpProxy']['url'] = url + "sharing/proxy"
         
                 app_json_text = json.dumps(app_json)        
                 for service in service_mapping:
@@ -1357,7 +1576,7 @@ class ApplicationItem(TextItem):
             if original_item['url']:
                 find_string = "/apps/"
                 index = original_item['url'].find(find_string)
-                new_url = '{0}{1}'.format(connection['url'].rstrip('/'), original_item['url'][index:])
+                new_url = '{0}{1}'.format(url.rstrip('/'), original_item['url'][index:])
                 find_string = "id="
                 index = new_url.find(find_string)
                 new_url = '{0}{1}'.format(new_url[:index + len(find_string)], new_item.id)
@@ -1377,6 +1596,10 @@ class ItemCreateException(Exception):
     """
     pass
 
+#endregion
+
+#region Tool and Validation Functions
+
 def _add_message(message, type='Info'):
     """Add a message to the output"""
     if type == 'Info':
@@ -1386,7 +1609,54 @@ def _add_message(message, type='Info'):
     elif type == 'Error':
         arcpy.AddError(message)
 
-def _get_solution_definition_portal(source, solution_item, solution_definition, cached_items, copy_features, groups=[]):
+def _get_group_definition(group):
+    return GroupDefinition(dict(group), thumbnail=group.get_thumbnail_link(), portal_group=group)
+
+def _get_item_defintion(item, copy_data=False):   
+    # If the item is an application or dashboard find the web map or group that the application is built from
+    if item['type'] in ['Web Mapping Application','Operation View']:
+        app_json = item.get_data()
+        return ApplicationDefinition(dict(item), data=app_json, thumbnail=item.get_thumbnail_link(), portal_item=item)
+   
+       
+    # If the item is a web map find all the feature service layers and tables that make up the map
+    elif item['type'] == 'Web Map':
+        webmap_json = item.get_data()
+        return WebMapDefinition(dict(item), data=webmap_json, thumbnail=item.get_thumbnail_link(), portal_item=item)
+
+    # If the item is a feature service get the definition of the service and its layers and tables
+    elif item['type'] == 'Feature Service':
+        svc = lyr.FeatureService.fromitem(item)
+        service_definition = dict(svc.properties)
+
+        # Get the defintions of the the layers and tables
+        layers_definition = { 'layers' : [], 'tables' : [] }
+        for layer in svc.layers:
+            layers_definition['layers'].append(dict(layer.properties))
+        for table in svc.tables:
+            layers_definition['tables'].append(dict(table.properties))
+        
+        # Get the data associated with the item 
+        data = item.get_data()     
+        
+        # Get the features for the layers and tables if requested
+        features = None
+        if copy_data:
+            features = {}
+            for layer in svc.layers + svc.tables:
+                features[str(layer.properties['id'])] = _get_features(layer)
+
+        return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=features, data=data, thumbnail=item.get_thumbnail_link(), portal_item=item)
+
+    # All other item types
+    else:
+        if item['type'] in TEXT_BASED_ITEM_TYPES:
+            item_definition['data'] = item.get_data()
+            return TextItemDefinition(dict(item), data=item.get_data(), thumbnail=item.get_thumbnail_link(), portal_item=item)
+        else:
+            return ItemDefinition(dict(item), data=None, thumbnail=item.get_thumbnail_link(), portal_item=item)
+
+def _get_item_definitions_recursive(source, item, item_definitions, cached_defintions=None, copy_data=False):
     """Get the definition of the specified item. If it is a web application or webmap it will be called recursively find all the items that make up a given map or app.
     Keyword arguments:
     source - The portal containing the item
@@ -1396,35 +1666,45 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
     copy_features - A flag indicating if the data from the original feature services should be copied
     group - A list of groups to share the item with, used when the web application is based on a group of maps"""  
 
-    # Check if the item has already been added to the collection
-    existing_item = next((i for i in solution_definition if i.info['id'] == solution_item.id), None)
-    if existing_item:
-        return
+    item_definition = None
 
-    cached_item = next((i for i in cached_items if i.info['id'] == solution_item.id), None)
-    if cached_item:
-        solution_definition.append(cached_item)
+    # Check if the item defintion has already been added to the defintion of the solution
+    item_definition = next((i for i in item_definitions if i.info['id'] == item.id), None)
+    if item_definition:
+        return item_definition
 
-    # If the item is an application or dashboard find the web map or group that the application is built from
-    if solution_item['type'] in ['Web Mapping Application','Operation View']:
-        if cached_item:
-            app_json = cached_item.data
-        else:
-            app_json = solution_item.get_data()
-            solution_definition.append(ApplicationItem(solution_item, data=app_json, sharing={
-				    "access": "private",
-				    "groups": groups
-					    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+    # Check if we have already queried the definition of the item in previous runs
+    if cached_defintions:
+        item_definition = next((i for i in cached_defintions if i.info['id'] == item.id), None)
+
+    # if the item is a group find all the web maps that are shared with the group
+    if isinstance(item, gis.Group):
+        if not item_definition:
+            item_definition = _get_group_definition(item)
+        item_definitions.append(item_definition)
+                    
+        search_query = 'group:{0} AND type:{1}'.format(item['id'], 'Web Map')
+        group_items = source.content.search(search_query, max_items=100, outside_org=True)
+        for webmap in group_items:
+            webmap_definition = _get_item_definitions_recursive(source, webmap, item_definitions, cached_defintions, copy_data)
+            webmap_definition.sharing['groups'] = [item['id']]
+
+    # If the item is an application or dashboard find the web map or group that the application referencing
+    elif item['type'] in ['Web Mapping Application','Operation View']:
+        if not item_definition:
+            item_definition = _get_item_defintion(item)
+        item_definitions.append(item_definition)
    
+        app_json = item_definition.data
         webmap_id = None
-        if solution_item['type'].lower() == "operation view": #Operations Dashboard
+        if item['type'].lower() == "operation view": #Operations Dashboard
             if 'widgets' in app_json:
                 for widget in app_json['widgets']:
                     if 'mapId' in widget:
                         webmap_id = widget['mapId']
                         break
 
-        elif "Web AppBuilder" in solution_item['typeKeywords']: #Web AppBuilder
+        elif "Web AppBuilder" in item['typeKeywords']: #Web AppBuilder
             if 'map' in app_json:
                 if 'itemId' in app_json['map']:
                     webmap_id = app_json['map']['itemId']
@@ -1433,110 +1713,62 @@ def _get_solution_definition_portal(source, solution_item, solution_definition, 
             if 'values' in app_json:
                 if 'group' in app_json['values']:
                     group_id = app_json['values']['group']
-                    group = next((g for g in solution_definition if g.info['id'] == group_id), None)
-                    if not group:
-                        cached_group = next((i for i in cached_items if i.info['id'] == group_id), None)
-                        if cached_group:
-                            group = cached_group.portal_group
-                            solution_definition.append(cached_group)
-                        else:
-                            group = source.groups.get(group_id)
-                            if not group:
-                                raise Exception("Failed to find group {0} in the source organization".format(group_id))
-                            solution_definition.append(Group(group, thumbnail=group.get_thumbnail_link(), portal_group=group))
-                    
-                    search_query = 'group:{0} AND type:{1}'.format(group_id, 'Web Map')
-                    group_items = source.content.search(search_query, max_items=100, outside_org=True)
-                    for webmap in group_items:
-                        _get_solution_definition_portal(source, webmap, solution_definition, cached_items, copy_features, [group_id])
+                    cached_group_definition = next((i for i in cached_defintions if i.info['id'] == group_id), None)
+                    if cached_group_definition:
+                        group = cached_group_definition.portal_item
+                    else:
+                        group = source.groups.get(group_id)
+                    _get_item_definitions_recursive(source, group, item_definitions, cached_defintions, copy_data)
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
         
         if webmap_id:
-            cached_webmap = next((i for i in cached_items if i.info['id'] == webmap_id), None)
-            if cached_webmap:
-                webmap = cached_webmap.portal_item
+            cached_webmap_definition = next((i for i in cached_defintions if i.info['id'] == webmap_id), None)
+            if cached_webmap_definition:
+                webmap = cached_webmap_definition.portal_item
             else:
                 webmap = source.content.get(webmap_id)
-            _get_solution_definition_portal(source, webmap, solution_definition, cached_items, copy_features)
+            _get_item_definitions_recursive(source, webmap, item_definitions, cached_defintions, copy_data)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
-    elif solution_item['type'] == 'Web Map':
-        if cached_item:
-            webmap_json = cached_item.data
-        else:    
-            webmap_json = solution_item.get_data()
-            solution_definition.append(WebMapItem(solution_item, data=webmap_json, sharing={
-				    "access": "private",
-				    "groups": groups
-					    }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+    elif item['type'] == 'Web Map':
+        if not item_definition:
+            item_definition = _get_item_defintion(item)
+        item_definitions.append(item_definition)
+        
+        webmap_json = item_definition.data
         
         if 'operationalLayers' in webmap_json:
             for layer in webmap_json['operationalLayers']:
                 if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer":
                     if 'itemId' in layer:
-                        cached_service = next((i for i in cached_items if i.info['id'] == layer['id']), None)
-                        if cached_service:
-                            feature_service = cached_service.portal_item
+                        cached_service_definition = next((i for i in cached_defintions if i.info['id'] == layer['id']), None)
+                        if cached_service_definition:
+                            feature_service = cached_service_definition.portal_item
                         else:
                             feature_service = source.content.get(layer['itemId'])
-                        _get_solution_definition_portal(source, feature_service, solution_definition, cached_items, copy_features)
+                        _get_item_definitions_recursive(source, feature_service, item_definitions, cached_defintions, copy_data)
 
         if 'tables' in webmap_json:
             for table in webmap_json['tables']:
                     if 'itemId' in table:
-                        cached_service = next((i for i in cached_items if i.info['id'] == table['id']), None)
-                        if cached_service:
-                            feature_service = cached_service.portal_item
+                        cached_service_definition = next((i for i in cached_defintions if i.info['id'] == table['id']), None)
+                        if cached_service_definition:
+                            feature_service = cached_service_definition.portal_item
                         else:
                             feature_service = source.content.get(table['itemId'])
-                        _get_solution_definition_portal(source, feature_service, solution_definition, cached_items, copy_features)
+                        _get_item_definitions_recursive(source, feature_service, item_definitions, cached_defintions, copy_data)
 
-    # If the item is a feature service get the definition of the service and its layers and tables
-    elif solution_item['type'] == 'Feature Service':
-        if not cached_item:
-            svc = lyr.FeatureService.fromitem(solution_item)
-            service_definition = dict(svc.properties)
-
-            # Get the defintions of the the layers and tables
-            layers_definition = { 'layers' : [], 'tables' : [] }
-            for layer in svc.layers:
-                layers_definition['layers'].append(dict(layer.properties))
-            for table in svc.tables:
-                layers_definition['tables'].append(dict(table.properties))
-        
-            # Get the data associated with the item 
-            data = solution_item.get_data()     
-        
-            # Get the features for the layers and tables if requested
-            features = None
-            if copy_features:
-                features = {}
-                for layer in svc.layers + svc.tables:
-                    features[str(layer.properties['id'])] = _get_features(layer)
-
-            solution_definition.append(FeatureServiceItem(solution_item, service_definition, layers_definition, features=features, data=data, sharing= {
-				        "access": "private",
-				        "groups": groups
-					        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
-
-    # All other item types
+    # All other types we no longer need to recursively look for related items
     else:
-        if not cached_item:
-            if solution_item['type'] in TEXT_BASED_ITEM_TYPES:
-                item_definition['data'] = solution_item.get_data()
-                solution_definition.append(TextItem(solution_item, data=solution_item.get_data(), sharing={
-			    "access": "private",
-			    "groups": groups
-			        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
-            else:
-                solution_definition.append(Item(solution_item, data=None, sharing={
-			    "access": "private",
-			    "groups": groups
-			        }, thumbnail=solution_item.get_thumbnail_link(), portal_item=solution_item))
+        if not item_definition:
+            item_definition = _get_item_defintion(item, copy_data)
+        item_definitions.append(item_definition)
 
-def _get_solution_definition_local(source_directory, solution, solution_definition, cached_items, copy_features):
+    return item_definition
+
+def _get_item_definitions_local(source_directory, solution, solution_definition, cached_items, copy_data=False):
     """Get the definition of the solution. This may be made up of multiple items and groups.
     Keyword arguments:
     source_directory - The directory containing the items and the SolutionDefinition.json file that defines the items that make up a given solution.
@@ -1594,22 +1826,22 @@ def _get_solution_definition_local(source_directory, solution, solution_definiti
                 featureserver_file = os.path.join(esriinfo_directory, 'featureserver.json')
                 with open(featureserver_file, 'r') as file:
                     featureserver_json = json.loads(file.read())
-                if copy_features:
+                if copy_data:
                     features_file = os.path.join(esriinfo_directory, 'features.json')
                     if os.path.exists(features_file):
                         with open(features_file, 'r') as file:
                             features_json = json.loads(file.read())
 
-                solution_item = FeatureServiceItem(item['info'], featureserver_json['serviceDefinition'], featureserver_json['layersDefinition'], features=features_json, data=data, sharing=item['sharing'])
+                solution_item = FeatureServiceDefinition(item['info'], featureserver_json['serviceDefinition'], featureserver_json['layersDefinition'], features=features_json, data=data, sharing=item['sharing'])
 
             elif type == 'Web Map':
-                solution_item = WebMapItem(item['info'], data, item['sharing'])
+                solution_item = WebMapDefinition(item['info'], data, item['sharing'])
             elif type in ['Web Mapping Application', 'Operation View']:
-                solution_item = ApplicationItem(item['info'], data, item['sharing'])
+                solution_item = ApplicationDefinition(item['info'], data, item['sharing'])
             else:
-                solution_item = TextItem(item['info'], data, item['sharing'])
+                solution_item = TextItemDefinition(item['info'], data, item['sharing'])
         else:
-            solution_item = Item(item['info'], data, item['sharing'])
+            solution_item = ItemDefinition(item['info'], data, item['sharing'])
 
         # If the item has a thumbnail find the path
         thumbnail_directory = os.path.join(esriinfo_directory, 'thumbnail')
@@ -1637,7 +1869,7 @@ def _get_solution_definition_local(source_directory, solution, solution_definiti
         with open(groupinfo, 'r') as file:
             content = file.read() 
             group = json.loads(content)
-            solution_group = Group(group)
+            solution_group = GroupDefinition(group)
 
         # If the group has a thumbnail find the path
         thumbnail_directory = os.path.join(group_directory, 'thumbnail')
@@ -1674,21 +1906,20 @@ def _get_existing_item(item, folder_items):
     return next((folder_item for folder_item in folder_items if folder_item['type'] == item['type'] 
                           and "source-{0}".format(item['id']) in folder_item['typeKeywords']), None)
 
-def _get_existing_group(connection, group, linked_folder):
+def _get_existing_group(target, group, linked_folder):
     """Test if a group with a given source tag already exists in the organization. 
     This is used to determine if the group has already been created and if new maps and apps that belong to the same group should be shared to the same group.
     Keyword arguments:
     group - The original group used to determine if it has already been cloned in the orgnaization.
     linked_folder - The folder in which new items are created. Each group is tied to a given folder and when applicable the items in that folder are shared with the associated group.""" 
     
-    target = connection['target']
-    search_query = 'owner:{0} AND tags:"source-{1},sourcefolder-{2}"'.format(connection['username'], group['id'], linked_folder['id']) 
-    groups = target.groups.search(search_query, outside_org=False)
+    search_query = 'tags:"source-{0},sourcefolder-{1}"'.format(group['id'], linked_folder['id']) 
+    groups = target.groups.search(search_query)
     if len(groups) > 0:
         return groups[0]
     return None
 
-def _download_solutions(connection, solution_group, solutions, copy_features, output_directory):
+def _download_items(target, solution_group, solutions, copy_features, output_directory):
     """Download solutions from a portal to a local directory
     Keyword arguments:
     connection - Dictionary containing connection info to the target portal
@@ -1697,7 +1928,6 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
     copy_features - A flag indicating if the data from the original feature services should be downloaded as well
     output_directory - The directory to write the solution items and the definition configuration file""" 
     
-    target = connection['target']
     cached_items = []
 
     for solution in solutions:
@@ -1715,7 +1945,7 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
 
             # Get the definitions of the groups and items (maps, services in the case of an spplication) that make up the solution
             solution_definition = []
-            _get_solution_definition_portal(target, solution_item, solution_definition, cached_items, copy_features)
+            _get_item_definitions_recursive(target, solution_item, solution_definition, cached_items, copy_features)
 
             # Add the items to the cached list so they can be reused if items are reused in other solutions
             cached_items = list(set(cached_items + solution_definition))
@@ -1729,7 +1959,7 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
                 os.makedirs(output_directory)
 
             # Write the items to the output directory
-            for item in [item for item in solution_definition if isinstance(item, Item)]:
+            for item in [item for item in solution_definition if isinstance(item, ItemDefinition)]:
                 item_directory = item.write(output_directory)
                 if item_directory:
                     _add_message("Downloaded {0} {1}".format(item.info['type'], item.info['title']))
@@ -1738,7 +1968,7 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
                 arcpy.SetProgressorPosition() 
 
             # Write the groups to the output directory
-            for group in [group for group in solution_definition if isinstance(group, Group)]:
+            for group in [group for group in solution_definition if isinstance(group, GroupDefinition)]:
                 group_directory = group.write(output_directory)
                 if group_directory:
                     _add_message("Downloaded Group {0}".format(group.info['title']))
@@ -1767,10 +1997,10 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
 
                 definitions['Solutions'][solution] = {'items' : [], 'groups' : []}
 
-                for item in [item for item in solution_definition if isinstance(item, Item)]:
+                for item in [item for item in solution_definition if isinstance(item, ItemDefinition)]:
                     definitions['Solutions'][solution]['items'].append(item.info['id'])
 
-                for group in [group for group in solution_definition if isinstance(group, Group)]:
+                for group in [group for group in solution_definition if isinstance(group, GroupDefinition)]:
                     definitions['Solutions'][solution]['groups'].append(group.info['id'])
 
                 file.write(json.dumps(definitions))
@@ -1782,7 +2012,7 @@ def _download_solutions(connection, solution_group, solutions, copy_features, ou
             _add_message('Failed to download {0}: {1}'.format(solution, str(e)), 'Error')
             _add_message('------------------------')
 
-def _create_solutions(connection, industry, solutions, extent, copy_features, output_folder):
+def _clone_items(target, item_definitions, extent, folder):
     """Clone solutions into a new portal
     Keyword arguments:
     connection - Dictionary containing connection info to the target portal
@@ -1792,182 +2022,107 @@ def _create_solutions(connection, industry, solutions, extent, copy_features, ou
     copy_features - A flag indicating if the data from the original feature services should be copied as well
     output_folder - The name of the folder to create the new items within the user's content""" 
 
-    target = connection['target']
-    if connection['local']:
-        source_directory = connection['source directory']
-    else:
-        source = gis.GIS()
-
     group_mapping = {}   
     service_mapping = []
     webmap_mapping = {}
-    cached_items = []
-    
-    # If the folder does not already exist create a new folder
-    current_user = target.users.me
-    folders = current_user.folders
-    folder = next((folder for folder in folders if folder['title'] == output_folder), None)
-    if not folder:
-        folder = target.content.create_folder(output_folder)
-    
-    # Get the all items in the folder
-    folder_items = current_user.items(folder['title'])
+    created_items = []
 
-    for solution in solutions:
-        try:
-            deploy_message = 'Deploying {0}'.format(solution)
-            _add_message(deploy_message)
-            arcpy.SetProgressor('default', deploy_message) 
-                      
-            created_items = []
-            solution_definition = []           
+    try:
+        # Get the all items in the folder
+        folder_items = target.users.me.items(folder['title'])
 
-            if connection['local']:
-                # Get the definitions of the items and groups that make up the solution
-                _get_solution_definition_local(source_directory, solution, solution_definition, cached_items, copy_features)
-            else:
-                # Search for the industry group
-                search_query = 'accountid:{0} AND tags:"{1}" AND title:"{2}"'.format(PORTAL_ID, TAG, industry)
-                groups = source.groups.search(search_query)
-                if len(groups) == 0:
-                    _add_message("Failed to find group {0} in the source organization".format(industry), 'Error')
-                    _add_message('------------------------')
-                    continue
-
-                # Search for the solution the source organization within the industry group using the title of the item.
-                search_query = 'accountid:{0} AND group:"{1}" AND title:"{2}"'.format(PORTAL_ID, groups[0]['id'], solution)
-                items = source.content.search(search_query)
-                solution_item = next((item for item in items if item.title == solution), None)
-                if not solution_item:
-                    _add_message("Failed to find solution item {0}".format(solution), 'Error')
-                    _add_message('------------------------')
-                    continue
-
-                # Check if the item has already been cloned into the target portal and if so, continue on to the next map or app.
-                existing_item = _get_existing_item(solution_item, folder_items)
-                if existing_item:
-                    _add_message("{0} already exists in {1} folder".format(solution_item.title, folder['title']))
-                    _add_message('------------------------')
-                    continue
-
-                # Get the definitions of the items and groups that make up the solution
-                _get_solution_definition_portal(source, solution_item, solution_definition, cached_items, copy_features)
-
-            # Set the progressor
-            item_count = len(solution_definition)
-            arcpy.SetProgressor('step', deploy_message, 0, item_count, 1)
-
-            # Add the items to the cached list so they can be reused if items are reused in other solutions
-            cached_items = list(set(cached_items + solution_definition))
-
-            # Clone the groups
-            for group in [group for group in solution_definition if isinstance(group, Group)]:
-                solution_definition.remove(group)
-                original_group = group.info
-
-                if original_group['id'] in group_mapping: #We have already found or created this item
-                    _add_message("Existing Group {0} found".format(original_group['title']))
-                    arcpy.SetProgressorPosition()
-                    continue
+        # Clone the groups
+        for group in [group for group in item_definitions if isinstance(group, GroupDefinition)]:
+            item_definitions.remove(group)
+            original_group = group.info
                 
-                new_group = _get_existing_group(connection, original_group, folder)
-                if not new_group:
-                    new_group = group.clone(connection, folder)
-                    created_items.append(new_group)
-                    _add_message("Created Group {0}".format(new_group['title']))
-                else:
-                    _add_message("Existing Group {0} found".format(new_group['title']))
-                group_mapping[original_group['id']] = new_group['id']
-                arcpy.SetProgressorPosition()
-
-            # Clone the feature services
-            for feature_service in [item for item in solution_definition if isinstance(item, FeatureServiceItem)]:
-                solution_definition.remove(feature_service)
-                original_item = feature_service.info
-
-                if original_item['id'] in [service_map[0][0] for service_map in service_mapping]: #We have already found or created this item
-                    _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
-                    arcpy.SetProgressorPosition()
-                    continue
-
-                new_item = _get_existing_item(original_item, folder_items)
-                if not new_item:                     
-                    new_item = feature_service.clone(connection, group_mapping, extent, folder)
-                    created_items.append(new_item)
-                    _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
-                else:
-                    _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))        
-                service_mapping.append([(original_item['id'], original_item['url']),
-                                            (new_item['id'], new_item['url'])])
-                arcpy.SetProgressorPosition()
-
-            # Clone the web maps
-            for webmap in [item for item in solution_definition if isinstance(item, WebMapItem)]:
-                solution_definition.remove(webmap)
-                original_item = webmap.info
-
-                if original_item['id'] in webmap_mapping: #We have already found or created this item
-                    _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
-                    arcpy.SetProgressorPosition()
-                    continue
-          
-                new_item = _get_existing_item(original_item, folder_items)
-                if not new_item:
-                    new_item = webmap.clone(connection, group_mapping, service_mapping, extent, folder)
-                    created_items.append(new_item)
-                    _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
-                else:
-                    _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
-                webmap_mapping[original_item['id']] =  new_item['id']
-                arcpy.SetProgressorPosition()
-
-            # Clone the applications
-            for application in [item for item in solution_definition if isinstance(item, ApplicationItem)]:
-                solution_definition.remove(application)
-                original_item = application.info
-
-                new_item = _get_existing_item(original_item, folder_items)
-                if not new_item:                   
-                    new_item = application.clone(connection, group_mapping, service_mapping, webmap_mapping, folder)
-                    created_items.append(new_item)
-                    _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
-                else:
-                    _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
-                arcpy.SetProgressorPosition()
-            
-            # Clone all other items
-            for item in solution_definition:
-                original_item = item.info
-
-                new_item = _get_existing_item(original_item, folder_items)
-                if not new_item:                   
-                    new_item = item.clone(connection, group_mapping, folder)
-                    created_items.append(new_item)
-                    _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
-                else:
-                    _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
-                arcpy.SetProgressorPosition()             
-
-            _add_message('Successfully added {0}'.format(solution))
-            _add_message('------------------------')
-
-        except Exception as e:
-            if type(e) == ItemCreateException:
-                _add_message(e.args[0], 'Error')
-                if e.args[1]:
-                    created_items.append(e.args[1])
+            new_group = _get_existing_group(target, original_group, folder)
+            if not new_group:
+                new_group = group.clone(target, folder)
+                created_items.append(new_group)
+                _add_message("Created Group {0}".format(new_group['title']))
             else:
-                _add_message(str(e), 'Error')
+                _add_message("Existing Group {0} found".format(new_group['title']))
+            group_mapping[original_group['id']] = new_group['id']
+            arcpy.SetProgressorPosition()
 
-            for solution_item in created_items:
-                if solution_item.delete():
-                    _add_message("Deleted {0}".format(solution_item.title))
-            _add_message('Failed to add {0}'.format(solution), 'Error')
-            _add_message('------------------------')
+        # Clone the feature services
+        for feature_service in [item for item in item_definitions if isinstance(item, FeatureServiceDefinition)]:
+            item_definitions.remove(feature_service)
+            original_item = feature_service.info
 
-#endregion
+            new_item = _get_existing_item(original_item, folder_items)
+            if not new_item:                     
+                new_item = feature_service.clone(target, extent, group_mapping, folder)
+                created_items.append(new_item)
+                _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
+            else:
+                _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))        
+            service_mapping.append([(original_item['id'], original_item['url']),
+                                        (new_item['id'], new_item['url'])])
+            arcpy.SetProgressorPosition()
 
-#region Tools and Validation Helpers
+        # Clone the web maps
+        for webmap in [item for item in item_definitions if isinstance(item, WebMapDefinition)]:
+            item_definitions.remove(webmap)
+            original_item = webmap.info
+
+            if original_item['id'] in webmap_mapping: #We have already found or created this item
+                _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
+                arcpy.SetProgressorPosition()
+                continue
+          
+            new_item = _get_existing_item(original_item, folder_items)
+            if not new_item:
+                new_item = webmap.clone(target, extent, group_mapping, service_mapping, folder)
+                created_items.append(new_item)
+                _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
+            else:
+                _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
+            webmap_mapping[original_item['id']] =  new_item['id']
+            arcpy.SetProgressorPosition()
+
+        # Clone the applications
+        for application in [item for item in item_definitions if isinstance(item, ApplicationDefinition)]:
+            item_definitions.remove(application)
+            original_item = application.info
+
+            new_item = _get_existing_item(original_item, folder_items)
+            if not new_item:                   
+                new_item = application.clone(target, group_mapping, service_mapping, webmap_mapping, folder)
+                created_items.append(new_item)
+                _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
+            else:
+                _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
+            arcpy.SetProgressorPosition()
+            
+        # Clone all other items
+        for item in item_definitions:
+            original_item = item.info
+
+            new_item = _get_existing_item(original_item, folder_items)
+            if not new_item:                   
+                new_item = item.clone(target, group_mapping, folder)
+                created_items.append(new_item)
+                _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
+            else:
+                _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
+            arcpy.SetProgressorPosition()             
+
+        return True
+
+    except Exception as e:
+        if type(e) == ItemCreateException:
+            _add_message(e.args[0], 'Error')
+            if e.args[1]:
+                created_items.append(e.args[1])
+        else:
+            _add_message(str(e), 'Error')
+
+        for solution_item in created_items:
+            if solution_item.delete():
+                _add_message("Deleted {0}".format(solution_item.title))
+        return False
 
 def _get_fields(parameter):
     feature_layer = _get_feature_layer(parameter)
