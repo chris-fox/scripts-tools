@@ -1402,13 +1402,76 @@ class FeatureServiceDefinition(TextItemDefinition):
         return copy.deepcopy(self._features)
 
     def _add_features(self, layers, relationships):
-        # Copy features from original item
+        """Add the features from the definition to the layers returned from the cloned item.
+        Keyword arguments:
+        layers - Dictionary containing the id of the layer and its corresponding arcgis.lyr.FeatureLayer
+        relationships - Dictionary containing the id of the layer and it's relationship definitions"""
+
         features = self.features          
         if features:
+            # Add in chunks of 2000 features
             chunk_size = 2000
-                                                 
-            for id in layers:
+            layer_ids = [id for id in layers]
+
+            # Find all the relates where the layer's role is the origin and the key field is the global id field
+            # We want to process these first, get the new global ids that are created and update in related features before processing the relates
+            global_id_origin_relates = {}
+            for id in relationships:            
+                if id not in layers or 'globalIdField' not in layers[id].properties:
+                    continue
+                global_id_field = layers[id].properties['globalIdField']
+                relates = [relate for relate in relationships[id] if relate['role'] == 'esriRelRoleOrigin' and relate['keyField'] == global_id_field]
+                if len(relates) > 0:
+                    global_id_origin_relates[id] = relates
+
+            for id in global_id_origin_relates:
+                if id not in layer_ids:
+                    continue
+                layer = layers[id]
+                global_id_field = layer.properties['globalIdField']
                 layer_features = features[str(id)]
+                if len(layer_features) == 0:
+                    layer_ids.remove(id)
+                    continue
+
+                # Add the features to the layer in chunks
+                add_results = []
+                for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
+                    edits = layer.edit_features(adds=features_chunk)
+                    add_results += edits['addResults']
+                layer_ids.remove(id)
+
+                # Create a mapping between the original global id and the new global id
+                global_id_mapping = { layer_features[i]['attributes'][global_id_field] : add_results[i]['globalId'] for i in range(0, len(layer_features)) }
+
+                for relate in global_id_origin_relates[id]:
+                    related_layer_id = relate['relatedTableId']
+                    if related_layer_id not in layer_ids:
+                        continue
+                    related_layer_features = features[str(related_layer_id)]
+                    if len(related_layer_features) == 0:
+                        layer_ids.remove(related_layer_id)
+                        continue
+
+                    # Get the definition of the definition relationship
+                    destination_relate = next((r for r in relationships[related_layer_id] if r['id'] == relate['id'] and r['role'] == 'esriRelRoleDestination'), None)
+                    if not destination_relate:
+                        continue
+
+                    # Update the relate features keyfield to the new global id
+                    for feature in related_layer_features:
+                        feature['attributes'][destination_relate['keyField']] = global_id_mapping[feature['attributes'][destination_relate['keyField']]]
+
+                    # Add the related features to the layer in chunks
+                    for features_chunk in [related_layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
+                        layers[related_layer_id].edit_features(adds=features_chunk)
+                    layer_ids.remove(related_layer_id)
+                      
+            # Add features to all other layers and tables                           
+            for id in layer_ids:
+                layer_features = features[str(id)]
+                if len(layer_features) == 0:
+                    continue
                 for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
                     layers[id].edit_features(adds=features_chunk)
 
