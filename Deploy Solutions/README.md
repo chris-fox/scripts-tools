@@ -60,7 +60,8 @@ To add aditional maps and apps to the tool:
 
     Note: Only share the item and add tags to final component of the solution. For example, if it is geoform application, just share and add the tag to the item associated with the geoform app. You don’t need to add the tags to the map or services that make up the app. If it is a collector map, just add the tags to the item for the collector map, etc.
     
-2. Open the tool, it should search the organization for the items with the tags and add them to the dropdowns in the parameters.
+2. Share the item and all the service, groups and maps associated with everyone. They need to be publically available to be seen by the tool.
+3. Open the tool, it should search the organization for the items with the tags and add them to the dropdowns in the parameters.
 
 ##Update Domains Tool##
 
