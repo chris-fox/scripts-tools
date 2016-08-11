@@ -1458,9 +1458,14 @@ class FeatureServiceDefinition(TextItemDefinition):
                     if not destination_relate:
                         continue
 
+                    key_field = destination_relate['keyField']
+
                     # Update the relate features keyfield to the new global id
                     for feature in related_layer_features:
-                        feature['attributes'][destination_relate['keyField']] = global_id_mapping[feature['attributes'][destination_relate['keyField']]]
+                        if key_field in feature['attributes']:
+                            global_id = feature['attributes'][key_field]
+                            if global_id in global_id_mapping:
+                                feature['attributes'][key_field] = global_id_mapping[global_id]
 
                     # Add the related features to the layer in chunks
                     for features_chunk in [related_layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
