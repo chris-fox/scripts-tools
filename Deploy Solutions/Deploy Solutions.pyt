@@ -52,40 +52,40 @@ class DeploySolutionsTool(object):
             direction="Input")
 
         param1 = arcpy.Parameter(
-            displayName="Solution Group",
-            name="solution_group",
+            displayName="Business Need",
+            name="business_need",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
         param2 = arcpy.Parameter(
-            displayName="Solutions",
-            name="solutions",
+            displayName="Solution",
+            name="solution",
             datatype="GPString",
             parameterType="Required",
             direction="Input",
             multiValue=True)
 
         param3 = arcpy.Parameter(
-            displayName="Extent",
-            name="extent",
-            datatype="GPExtent",
-            parameterType="Optional",
-            direction="Input")
-
-        param4 = arcpy.Parameter(
             displayName="Copy Sample Data",
             name="copy_sample_data",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
-        param4.value = False
+        param3.value = False
 
-        param5 = arcpy.Parameter(
+        param4 = arcpy.Parameter(
             displayName="Folder",
             name="folder",
             datatype="GPString",
             parameterType="Required",
+            direction="Input")
+
+        param5 = arcpy.Parameter(
+            displayName="Area of Interest",
+            name="area_of_interest",
+            datatype="GPExtent",
+            parameterType="Optional",
             direction="Input")
 
         param6 = arcpy.Parameter(
@@ -118,7 +118,7 @@ class DeploySolutionsTool(object):
 
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
-                parameters[5].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'solutions' : solutions, 'folders' : folders }
                 parameters[6].value = json.dumps(validation_json)
 
@@ -152,13 +152,13 @@ class DeploySolutionsTool(object):
             parameters[2].filter.list = sorted(items)
             parameters[2].value = arcpy.ValueTable()
 
-        if not parameters[5].hasBeenValidated:
+        if not parameters[4].hasBeenValidated:
             validation_json = json.loads(parameters[6].valueAsText)  
             folders = validation_json['folders']
-            if parameters[5].value:
-                parameters[5].filter.list = sorted(set([parameters[5].valueAsText] + [folder['title'] for folder in folders]))
+            if parameters[4].value:
+                parameters[4].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
             else:
-                parameters[5].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
@@ -183,10 +183,10 @@ class DeploySolutionsTool(object):
         solution_group = parameters[1].valueAsText
         value_table = parameters[2].value
         solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
-        solutions = list(set(solutions))
-        extent_definition = get_extent_definition(target, parameters[3].value)
-        copy_data = parameters[4].value
-        output_folder = parameters[5].valueAsText
+        solutions = list(set(solutions))        
+        copy_data = parameters[3].value
+        output_folder = parameters[4].valueAsText
+        extent_definition = get_extent_definition(target, parameters[5].value)
         parameters[6].value = ''
     
         cached_defintions = []
@@ -265,25 +265,25 @@ class CloneItemsTool(object):
             multiValue=True)
 
         param1 = arcpy.Parameter(
-            displayName="Extent",
-            name="extent",
-            datatype="GPExtent",
-            parameterType="Optional",
-            direction="Input")
-
-        param2 = arcpy.Parameter(
             displayName="Copy Data",
             name="copy_data",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
-        param2.value = False
+        param1.value = False
 
-        param3 = arcpy.Parameter(
+        param2 = arcpy.Parameter(
             displayName="Folder",
             name="folder",
             datatype="GPString",
             parameterType="Required",
+            direction="Input")
+
+        param3 = arcpy.Parameter(
+            displayName="Area of Interest",
+            name="area_of_interest",
+            datatype="GPExtent",
+            parameterType="Optional",
             direction="Input")
 
         param4 = arcpy.Parameter(
@@ -308,17 +308,17 @@ class CloneItemsTool(object):
             if not parameters[4].value:
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
-                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[2].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'folders' : folders }
                 parameters[4].value = json.dumps(validation_json)
 
-        if not parameters[3].hasBeenValidated:
+        if not parameters[2].hasBeenValidated:
             validation_json = json.loads(parameters[4].valueAsText)  
             folders = validation_json['folders']
-            if parameters[3].value:
-                parameters[3].filter.list = sorted(set([parameters[3].valueAsText] + [folder['title'] for folder in folders]))
+            if parameters[2].value:
+                parameters[2].filter.list = sorted(set([parameters[2].valueAsText] + [folder['title'] for folder in folders]))
             else:
-                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[2].filter.list = sorted([folder['title'] for folder in folders])
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
@@ -342,9 +342,9 @@ class CloneItemsTool(object):
         value_table = parameters[0].value
         items = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
         items = list(set(items))
-        extent_definition = get_extent_definition(target, parameters[1].value)
-        copy_data = parameters[2].value
-        output_folder = parameters[3].valueAsText
+        copy_data = parameters[1].value
+        output_folder = parameters[2].valueAsText
+        extent_definition = get_extent_definition(target, parameters[3].value)
         parameters[4].value = ''
     
         cached_defintions = []
