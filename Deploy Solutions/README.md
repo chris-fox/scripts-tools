@@ -21,12 +21,12 @@ This tools is used to clone publically available items in arcgis online into you
 
 1. Ensure you are logged into the portal you wish to create the content in
 2. Enter the item id of the item you want to clone. Once you click out of the parameter a new row will be added and you can add additional item ids. If you are cloning a map or an app, you don't need to provide the id of the services or groups. They will automatically be cloned as well.
-3. Specify the output extent of the maps and apps
+3. Specify whether the data from any feature services should also be copied to the cloned feature service. 
+4. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
+    - Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
+5. Specify the output extent of the maps and apps
     - Default will use the default extent defined in the target portal
     - Alternatively select the extent of the current extent in the map, layer, or dataset
-4. Specify whether the data from any feature services should also be copied to the cloned feature service. 
-5. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
-    - Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
 6. Run the tool
 
 In addition, provided in the repo is a sample script, example.py, that shows how you can clone items through code. This could be useful in automating this process or if you need clone items that are not shared with everyone. The comments in the sample script show how to specify the source and target portals for cloning.
@@ -36,14 +36,14 @@ This tool is used to clone an existing map or app into your organization. The or
 
 1. Ensure you are logged into the portal you wish to create the content in
 2. Select the name of the industry
-2. Select the name of the group of solutions containing the solution you are interested in
+2. Select the group of solutions you are interested in
 3. Select one or more of the solutions
-4. Specify the output extent of the maps and apps
+4. Specify whether the data from any feature services should also be copied to the cloned feature service. 
+5. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
+    - Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
+6. Specify the output extent of the maps and apps
     - Default will use the default extent defined in the target portal
     - Alternatively select the extent of the current extent in the map, layer, or dataset
-5. Specify whether the data from any feature services should also be copied to the cloned feature service. 
-6. Specify the output folder to create the new items in. You can also type a new folder name to create a new folder for the items.
-    - Note: The folder is critical in this workflow as it is used to organize maps and apps that share services as part of a larger workflow. This allows the tool to know if a service has already been created if it finds one already in the folder.
 7. Run the tool
 
 The tool should create all the services, groups, maps and apps needed for the selected solution.
