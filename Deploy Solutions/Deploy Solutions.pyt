@@ -1623,10 +1623,12 @@ class WebMapDefinition(TextItemDefinition):
 
             for layer in layers:
                 feature_service_url = os.path.dirname(layer['url'])
-                if feature_service_url in service_mapping:
-                    layer_id = os.path.basename(layer['url'])
-                    layer['url'] = "{0}/{1}".format(service_mapping[feature_service_url]['url'], layer_id)
-                    layer['itemId'] = service_mapping[feature_service_url]['id']
+                for original_url in service_mapping:
+                    if feature_service_url.lower() == original_url.lower(): 
+                        layer_id = os.path.basename(layer['url'])
+                        layer['url'] = "{0}/{1}".format(service_mapping[original_url]['url'], layer_id)
+                        layer['itemId'] = service_mapping[original_url]['id']
+                        break
 
             # Add the web map to the target portal
             item_properties['text'] = json.dumps(webmap_json)
