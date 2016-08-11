@@ -186,7 +186,7 @@ class DeploySolutionsTool(object):
         solutions = list(set(solutions))        
         copy_data = parameters[3].value
         output_folder = parameters[4].valueAsText
-        extent_definition = get_extent_definition(target, parameters[5].value)
+        extent = parameters[5].value
         parameters[6].value = ''
     
         cached_defintions = []
@@ -219,7 +219,7 @@ class DeploySolutionsTool(object):
                 folder = next((folder for folder in folders if folder['title'] == output_folder), None)
                 if folder:
                     folder_items = target.users.me.items(output_folder)
-                    existing_item = _get_existing_item(item, folder_items)
+                    existing_item = _get_existing_item(solution_item, folder_items)
                     if existing_item:
                         _add_message("{0} already exists in {1} folder".format(item['title'], output_folder))
                         _add_message('------------------------')
@@ -236,7 +236,7 @@ class DeploySolutionsTool(object):
                 # Add the items to the cached list so they can be reused if items are reused in other solutions
                 cached_defintions = list(set(cached_defintions + item_definitions))
 
-                if clone_items(target, item_definitions, extent_definition, output_folder):
+                if clone_items(target, item_definitions, output_folder, extent):
                     _add_message('Successfully added {0}'.format(solution))
                     _add_message('------------------------')
                 else:
@@ -344,7 +344,7 @@ class CloneItemsTool(object):
         items = list(set(items))
         copy_data = parameters[1].value
         output_folder = parameters[2].valueAsText
-        extent_definition = get_extent_definition(target, parameters[3].value)
+        extent = parameters[3].value
         parameters[4].value = ''
     
         cached_defintions = []
@@ -383,7 +383,7 @@ class CloneItemsTool(object):
                 # Add the items to the cached list so they can be reused if items are reused in other solutions
                 cached_defintions = list(set(cached_defintions + item_definitions))
 
-                if clone_items(target, item_definitions, extent_definition, output_folder):
+                if clone_items(target, item_definitions, output_folder, extent):
                     _add_message('Successfully cloned {0}'.format(item['title']))
                     _add_message('------------------------')
                 else:
@@ -522,7 +522,7 @@ class DeploySolutionsLocalTool(object):
             value_table = parameters[2].value
             solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
             solutions = sorted(list(set(solutions)))
-            extent = get_extent_definition(parameters[3].value)
+            extent = parameters[3].value
             copy_features = parameters[4].value
             output_folder = parameters[5].valueAsText
             parameters[6].value = ''
@@ -2007,46 +2007,6 @@ def get_item_definitions_local(items_directory, solution_name, item_definitions,
         # Append the group to the list
         item_definitions.append(solution_group)
 
-def get_extent_definition(target, extent=None):
-    """Get a dictionary representation of an arcpy.Extent object that is used by the clone_items method. 
-    This creates a WGS84 and Web Mercator representation of the extent that is used when setting the spatial reference of feature services and the default extent of items. 
-    Keyword arguments:
-    target - The portal that items will be cloned to.
-    extent - Optionally provide an arcpy.Extent to be used. If no extent is provided it will return the default extent defined in the target portal."""   
-    
-    coordinates = []
-    sr = None
-
-    if extent:
-        default_extent = {'xmin' : extent.XMin, 'xmax' : extent.XMax, 'ymin' : extent.YMin, 'ymax' : extent.YMax }
-        sr = extent.spatialReference
-    else: # Get the default extent defined in the portal
-        default_extent = target.properties['defaultExtent']
-        sr = arcpy.SpatialReference(default_extent['spatialReference']['wkid'])
-       
-    coordinates = [[default_extent['xmin'], default_extent['ymin']], 
-        [default_extent['xmax'], default_extent['ymin']], 
-        [default_extent['xmax'], default_extent['ymax']], 
-        [default_extent['xmin'], default_extent['ymax']], 
-        [default_extent['xmin'], default_extent['ymin']]]
-    polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), sr)
-    extent = polygon.extent
-
-    # Project the extent to WGS84 which is used by default for the web map and services initial extents
-    extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
-    extent_web_mercator = extent.projectAs(arcpy.SpatialReference(102100))
-    extent_dict = {'wgs84' : '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
-                                                extent_wgs84.XMax, extent_wgs84.YMax),
-                  'web_mercator' : {
-				    "xmin" : extent_web_mercator.XMin,
-				    "ymin" : extent_web_mercator.YMin,
-				    "xmax" : extent_web_mercator.XMax,
-				    "ymax" : extent_web_mercator.YMax,
-				    "spatialReference" : {
-					    "wkid" : 102100 } } }
-
-    return extent_dict
-
 def download_items(item_definitions, output_directory):
     """Download items from a portal to a local directory
     Keyword arguments:
@@ -2073,13 +2033,13 @@ def download_items(item_definitions, output_directory):
       
     return True 
 
-def clone_items(target, item_definitions, extent, folder_name):
+def clone_items(target, item_definitions, folder_name, extent=None):
     """Clone items into a new portal
     Keyword arguments:
     target - The instance of arcgis.gis.GIS or portal to clone the items to.
     item_definitions - A list of item and group definitions to be cloned. This list can be created from an existing item by calling get_item_definitions.
-    extent - A dictionary representation of the extent used to specify the default extent of the new cloned items . This dictionary can be returned by calling get_extent_definition.
-    folder_name - The name of the folder to clone the new items to. If the folder does not already exist it will be created.""" 
+    folder_name - The name of the folder to clone the new items to. If the folder does not already exist it will be created.
+    extent - An arcpy.Extent used to specify the default extent of the new cloned items. If None the default extent defined in the target organization will be used.""" 
 
     group_mapping = {}   
     service_mapping = {}
@@ -2087,6 +2047,8 @@ def clone_items(target, item_definitions, extent, folder_name):
     created_items = []
 
     try:
+        default_extent = _get_extent_definition(target, extent)
+
         #If the folder does not already exist create a new folder
         current_user = target.users.me
         folders = current_user.folders
@@ -2119,7 +2081,7 @@ def clone_items(target, item_definitions, extent, folder_name):
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                     
-                new_item = feature_service.clone(target, extent, group_mapping, folder)
+                new_item = feature_service.clone(target, default_extent, group_mapping, folder)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2139,7 +2101,7 @@ def clone_items(target, item_definitions, extent, folder_name):
           
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:
-                new_item = webmap.clone(target, extent, group_mapping, service_mapping, folder)
+                new_item = webmap.clone(target, default_extent, group_mapping, service_mapping, folder)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2167,7 +2129,7 @@ def clone_items(target, item_definitions, extent, folder_name):
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                   
-                new_item = item.clone(target, extent, group_mapping, folder)
+                new_item = item.clone(target, default_extent, group_mapping, folder)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2217,6 +2179,46 @@ def _get_features(feature_layer):
         offset += len(features)
         total_features += features
     return total_features
+
+def _get_extent_definition(target, extent=None):
+    """Get a dictionary representation of an arcpy.Extent object that is used by the clone_items method. 
+    This creates a WGS84 and Web Mercator representation of the extent that is used when setting the spatial reference of feature services and the default extent of items. 
+    Keyword arguments:
+    target - The portal that items will be cloned to.
+    extent - Optionally provide an arcpy.Extent to be used. If no extent is provided it will return the default extent defined in the target portal."""   
+    
+    coordinates = []
+    sr = None
+
+    if extent:
+        default_extent = {'xmin' : extent.XMin, 'xmax' : extent.XMax, 'ymin' : extent.YMin, 'ymax' : extent.YMax }
+        sr = extent.spatialReference
+    else: # Get the default extent defined in the portal
+        default_extent = target.properties['defaultExtent']
+        sr = arcpy.SpatialReference(default_extent['spatialReference']['wkid'])
+       
+    coordinates = [[default_extent['xmin'], default_extent['ymin']], 
+        [default_extent['xmax'], default_extent['ymin']], 
+        [default_extent['xmax'], default_extent['ymax']], 
+        [default_extent['xmin'], default_extent['ymax']], 
+        [default_extent['xmin'], default_extent['ymin']]]
+    polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), sr)
+    extent = polygon.extent
+
+    # Project the extent to WGS84 which is used by default for the web map and services initial extents
+    extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
+    extent_web_mercator = extent.projectAs(arcpy.SpatialReference(102100))
+    extent_dict = {'wgs84' : '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
+                                                extent_wgs84.XMax, extent_wgs84.YMax),
+                  'web_mercator' : {
+				    "xmin" : extent_web_mercator.XMin,
+				    "ymin" : extent_web_mercator.YMin,
+				    "xmax" : extent_web_mercator.XMax,
+				    "ymax" : extent_web_mercator.YMax,
+				    "spatialReference" : {
+					    "wkid" : 102100 } } }
+
+    return extent_dict
 
 def _get_existing_item(item, folder_items):
     """Test if an item with a given source tag already exists in the collection of items within a given folder. 

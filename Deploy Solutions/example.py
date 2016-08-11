@@ -29,14 +29,11 @@ if __name__ == "__main__":
             # If you want to copy the data with any feature services set the copy_data parameter to True
             deploy_solutions.get_item_definitions(source, item, item_definitions, copy_data=False)
             
-            # Get the default extent from the target organization. This will be used as the extent of new items created in the target portal
-            # If you want to specify your own custom extent, provide an arcpy.Extent to the extent parameter of the get_extent_defintion function
-            extent_definition = deploy_solutions.get_extent_definition(target, extent=None)
-
             # Specify the name of the folder to clone the items to. If it doesn't already exist it will be created.
             folder_name = "Clone Test"
 
-            if deploy_solutions.clone_items(target, item_definitions, extent_definition, folder_name):
+            #Optionally provide an arcpy.Extent in the 4th parameter to set the output extent of the cloned items.
+            if deploy_solutions.clone_items(target, item_definitions, folder_name, None):
                     print('Successfully cloned {0}'.format(item['title']))
                     print('------------------------')
             else:
