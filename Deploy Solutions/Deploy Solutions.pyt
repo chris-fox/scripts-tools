@@ -1353,7 +1353,7 @@ class TextItemDefinition(ItemDefinition):
             item_properties = self._get_item_properties()
             if extent:
                 item_properties['extent'] = extent['wgs84']
-            item_properties['text'] = self.data
+            item_properties['text'] = json.dumps(self.data)
             new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
 
             # Share the item
@@ -1556,7 +1556,7 @@ class FeatureServiceDefinition(TextItemDefinition):
             # Update the item definition of the service
             item_properties = self._get_item_properties()
             item_properties['extent'] = extent['wgs84']
-            item_properties['text'] = self.data
+            item_properties['text'] = json.dumps(self.data)
             new_item.update(item_properties=item_properties, thumbnail=self.thumbnail)
     
             # Copy features from original item
@@ -1665,8 +1665,6 @@ class ApplicationDefinition(TextItemDefinition):
 
             # Swizzle the item ids of the web maps, groups and URLs of defined in the application's data
             app_json = self.data
-            app_json_text = ''
-
             if "Web AppBuilder" in original_item['typeKeywords']: #Web AppBuilder
                 if 'portalUrl' in app_json:
                     app_json['portalUrl'] = portal_url
