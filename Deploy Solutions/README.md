@@ -1,7 +1,7 @@
 #Steps for setting up your environment to use the tools#
 1. Download or Clone this repo
 2. Install ArcGIS Pro 1.3
-3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. (You will likely need to run as an administrator if Pro was installed with the default settings)
+3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. Run it as an administrator.
 4. Run the following commands. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
    
     ```
@@ -54,7 +54,7 @@ This tool is only designed to work on solutions that are entirely hosted, ie the
 
 To add aditional maps and apps to the tool:
 
-1. Browse to the item in the org and do the following. 
+1. Browse to the item in this deployment org and do the following. 
     - Share the item with the industry group that the solution falls under, for example ArcGIS for Local Government. If the group for the industry doesn't already exist you can create a new group in the organization. The name of the group is what will show up in the list under the first parameter of the tool. Add the tag 'one.click.solution' to the group to signify that the group contains items that can be deployed with this Deploy Solutions Tool.
     - Add the tag solution.*SolutionGroup* to the item (Replace *SolutionGroup* with the name of the group associated with the solution. This is what is displayed in the second parameter of the tool. This is good when organizing a collection of maps and apps that work together, such as Manage Mosquito Populations which is composed of many maps and apps.). You can repeat this tag with different group names if the solution item should appear under multiple groups.
 
