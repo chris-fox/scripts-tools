@@ -213,7 +213,7 @@ class DeploySolutionsTool(object):
                 items = source.content.search(search_query)
                 solution_item = next((item for item in items if item.title == solution), None)
                 if not solution_item:
-                    _add_message("Failed to find solution item {0}".format(solution), 'Error')
+                    _add_message("Failed to find solution {0}".format(solution), 'Error')
                     _add_message('------------------------')
                     continue
 
@@ -357,9 +357,10 @@ class CloneItemsTool(object):
 
         for item_id in item_ids:
             try:
-                item = source.content.get(item_id)
-                if item is None:
-                    _add_message("Item {0} does not exist or is inaccessible, ensure it is shared with everyone".format(item_id), 'Error')
+                try:
+                    item = source.content.get(item_id)
+                except RuntimeError as e:
+                    _add_message("Failed to get item {0}: {1}".format(item_id, str(e)), 'Error')
                     _add_message('------------------------')
                     continue
 
@@ -1852,20 +1853,22 @@ def get_item_definitions(source, item, item_definitions, cached_defintions=None,
             if 'values' in app_json:
                 if 'group' in app_json['values']:
                     group_id = app_json['values']['group']
-                    group = source.groups.get(group_id)
-                    if not group:
-                        _add_message("Group {0} does not exist or is inaccessible.".format(group_id), 'Warning')
-                        return item_definition
+                    try:
+                        group = source.groups.get(group_id)
+                    except RuntimeError:
+                        _add_message("Failed to get group {0}".format(group_id, 'Error'))
+                        raise
                     get_item_definitions(source, group, item_definitions, cached_defintions, copy_data)
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
         
         if webmap_id:
-            webmap = source.content.get(webmap_id)
-            if not webmap:
-                _add_message("Web Map {0} does not exist or is inaccessible.".format(webmap_id), 'Warning')
-                return item_definition
+            try:
+                webmap = source.content.get(webmap_id)
+            except RuntimeError:
+                _add_message("Failed to get web map {0}".format(webmap_id, 'Error'))
+                raise
             get_item_definitions(source, webmap, item_definitions, cached_defintions, copy_data)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
@@ -1886,14 +1889,21 @@ def get_item_definitions(source, item, item_definitions, cached_defintions=None,
             feature_service_url = os.path.dirname(layer['url'])
             feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == feature_service_url), None)
             if not feature_service:
-                service = lyr.FeatureService(feature_service_url, source)
+                try:
+                    service = lyr.FeatureService(feature_service_url, source)
+                except RuntimeError:
+                    _add_message("Failed to get service {0}".format(feature_service_url, 'Warning'))
+                    continue
+
                 if 'serviceItemId' not in service.properties:
                     continue
 
-                feature_service = source.content.get(service.properties['serviceItemId'])
-                if not feature_service:
-                    _add_message("Feature Service {0} does not exist or is inaccessible.".format(layer['itemId']), 'Warning')
-                    continue
+                try:
+                    item_id = service.properties['serviceItemId']
+                    feature_service = source.content.get(item_id)
+                except RuntimeError:
+                    _add_message("Failed to get service item {0}".format(item_id, 'Error'))
+                    raise
                 get_item_definitions(source, feature_service, item_definitions, cached_defintions, copy_data)
 
     # All other types we no longer need to recursively look for related items
