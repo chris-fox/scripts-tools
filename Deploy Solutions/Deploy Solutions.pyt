@@ -182,8 +182,11 @@ class DeploySolutionsTool(object):
         industry = parameters[0].valueAsText
         solution_group = parameters[1].valueAsText
         value_table = parameters[2].value
-        solutions = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
-        solutions = list(set(solutions))        
+        solutions = []
+        for i in range(0, value_table.rowCount):
+            solution = value_table.getValue(i, 0)
+            if solution not in solutions:
+                solutions.append(solution)   
         copy_data = parameters[3].value
         output_folder = parameters[4].valueAsText
         extent = parameters[5].value
@@ -221,7 +224,7 @@ class DeploySolutionsTool(object):
                     folder_items = target.users.me.items(output_folder)
                     existing_item = _get_existing_item(solution_item, folder_items)
                     if existing_item:
-                        _add_message("{0} already exists in {1} folder".format(item['title'], output_folder))
+                        _add_message("{0} already exists in {1} folder".format(solution_item['title'], output_folder))
                         _add_message('------------------------')
                         continue
 
@@ -340,8 +343,11 @@ class CloneItemsTool(object):
 
         # Get the input parameters
         value_table = parameters[0].value
-        items = [value_table.getValue(i, 0) for i in range(0, value_table.rowCount)]
-        items = list(set(items))
+        item_ids = []
+        for i in range(0, value_table.rowCount):
+            item_id = value_table.getValue(i, 0)
+            if item_id not in item_ids:
+                item_ids.append(item_id)   
         copy_data = parameters[1].value
         output_folder = parameters[2].valueAsText
         extent = parameters[3].value
@@ -349,11 +355,11 @@ class CloneItemsTool(object):
     
         cached_defintions = []
 
-        for item_id in items:
+        for item_id in item_ids:
             try:
                 item = source.content.get(item_id)
                 if item is None:
-                    _add_message("Failed to find item {0}, ensure it is shared with everyone".format(item_id))
+                    _add_message("Item {0} does not exist or is inaccessible, ensure it is shared with everyone".format(item_id), 'Error')
                     _add_message('------------------------')
                     continue
 
