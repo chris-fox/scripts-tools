@@ -1508,15 +1508,13 @@ class FeatureServiceDefinition(TextItemDefinition):
             name = original_item['name']
             if not target.content.is_service_name_available(name, 'featureService'):
                 name = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))       
-            new_item = target.content.create_service(name, service_type='featureService', folder=folder['title'])
+            new_item = target.content.create_service(name, service_type='featureService', wkid=102100, folder=folder['title'])
     
             # Update the new service using the definition of the original feature service
-            for key in ['layers', 'tables']:
+            for key in ['layers', 'tables', 'serviceItemId', 'spatialReference']:
                 if key in service_definition:
                     del service_definition[key]
             service_definition['initialExtent'] = extent['web_mercator']
-            service_definition['spatialReference'] = 	{ "spatialReference" : {
-		                                    "wkid" : 102100, "latestWkid" : 3857}}
                     
             feature_service = lyr.FeatureService.fromitem(new_item)
             feature_service_admin = feature_service.admin
