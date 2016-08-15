@@ -1504,21 +1504,21 @@ class FeatureServiceDefinition(TextItemDefinition):
             # Get the definition of the original feature service
             service_definition = self.service_definition
 
-            # Create a new feature service
+            # Modify the definition before passing to create the new service
             name = original_item['name']
             if not target.content.is_service_name_available(name, 'featureService'):
                 name = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))       
-            new_item = target.content.create_service(name, service_type='featureService', wkid=102100, folder=folder['title'])
+            service_definition['name'] = name
     
-            # Update the new service using the definition of the original feature service
-            for key in ['layers', 'tables', 'serviceItemId', 'spatialReference']:
+            for key in ['layers', 'tables']:
                 if key in service_definition:
                     del service_definition[key]
             service_definition['initialExtent'] = extent['web_mercator']
-                    
-            feature_service = lyr.FeatureService.fromitem(new_item)
-            feature_service_admin = feature_service.admin
-            feature_service_admin.update_definition(service_definition) 
+            service_definition['spatialReference'] = { "spatialReference" : {
+		                                    "wkid" : 102100, "latestWkid" : 3857}}
+
+            # Create a new feature service
+            new_item = target.content.create_service(name, service_type='featureService', create_params=service_definition, folder=folder['title'])
 
             # Get the layer and table definitions from the original service and prepare them for the new service
             layers_definition = self.layers_definition
@@ -1547,6 +1547,8 @@ class FeatureServiceDefinition(TextItemDefinition):
             
             # Add the layer and table definitions to the service
             # Explicitly add layers first and then tables, otherwise sometimes json.dumps() reverses them and this effects the output service
+            feature_service = lyr.FeatureService.fromitem(new_item)
+            feature_service_admin = feature_service.admin
             if len(layers_definition['layers']) > 0:
                 feature_service_admin.add_to_definition({'layers' : layers_definition['layers']})
             if len(layers_definition['tables']) > 0:
