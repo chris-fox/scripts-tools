@@ -24,16 +24,17 @@ if __name__ == "__main__":
 
         try:
             print('Cloning {0}'.format(item['title']))
-
-            item_definitions = []
-            # If you want to copy the data with any feature services set the copy_data parameter to True
-            deploy_solutions.get_item_definitions(source, item, item_definitions, copy_data=False)
             
             # Specify the name of the folder to clone the items to. If it doesn't already exist it will be created.
-            folder_name = "Clone Test"
+            folder_name = "Debug"
 
-            #Optionally provide an arcpy.Extent in the 4th parameter to set the output extent of the cloned items.
-            if deploy_solutions.clone_items(target, item_definitions, folder_name, None):
+            # Optionally provide an arcpy.Extent to set the output extent of the cloned items.
+            extent = None
+
+            # Optionally specify whether the data from the original feature service should be copied to the cloned service.
+            copy_data = False
+
+            if deploy_solutions.clone_item(target, item, folder_name, extent, copy_data):
                     print('Successfully cloned {0}'.format(item['title']))
                     print('------------------------')
             else:
