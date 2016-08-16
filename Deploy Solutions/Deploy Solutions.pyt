@@ -1315,6 +1315,76 @@ class TextItemDefinition(ItemDefinition):
     Represents the definition of a text based item within ArcGIS Online or Portal.
     """
 
+    def _update_feature_attributes_for_portal(self, feature):
+        if 'attributes' in feature and feature['attributes'] is not None:
+            for attribute in [att for att in feature['attributes']]:
+                att_lower = attribute.lower()
+                if att_lower in feature['attributes']:
+                    continue
+                feature['attributes'][att_lower] = feature['attributes'][attribute]
+                del feature['attributes'][attribute]
+
+    def _update_fields_for_portal(self, layer):
+        if 'templates' in layer and layer['templates'] is not None:
+            for template in layer['templates']:
+                if 'prototype' in template and template['prototype'] is not None:
+                    self._update_feature_attributes_for_portal(template['prototype'])
+                    
+        if 'drawingInfo' in layer and layer['drawingInfo'] is not None:
+            if 'renderer' in layer['drawingInfo'] and layer['drawingInfo']['renderer'] is not None:
+                renderer = layer['drawingInfo']['renderer']
+                if renderer['type'] == 'uniqueValue':
+                    i == 0
+                    while 'field{0}'.format(i) in renderer:
+                        renderer['field{0}'.format(i)] = renderer['field{0}'.format(i)].lower()
+                        i += 1
+                elif renderer['type'] == 'classBreaks':
+                    if 'field' in renderer:
+                        renderer['field'] = renderer['field'].lower()
+                        
+            if 'labelingInfo' in layer['drawingInfo'] and layer['drawingInfo']['labelingInfo'] is not None:
+                labeling_infos = layer['drawingInfo']['labelingInfo']
+                for label_info in labeling_infos:
+                    if 'labelExpression' in label_info:
+                        results = re.findall(r"\[.*\]", label_info['labelExpression'])
+                        for result in results:
+                            label_info['labelExpression'] = str(label_info['labelExpression']).replace(result,str(result).lower())
+
+                    if 'labelExpressionInfo' in label_info and 'value' in label_info['labelExpressionInfo']:
+                        results = re.findall(r"{.*}", label_info['labelExpressionInfo']['value'])
+                        for result in results:
+                            label_info['labelExpressionInfo']['value'] = str(label_info['labelExpressionInfo']['value']).replace(result,str(result).lower())
+    
+        if 'popupInfo' in layer and layer['popupInfo'] is not None:
+            if 'title' in layer['popupInfo'] and layer['popupInfo']['title'] is not None:
+                results = re.findall(r"\{.*\}", layer['popupInfo']['title'])
+                for result in results:
+                    layer['popupInfo']['title'] = str(layer['popupInfo']['title']).replace(result,str(result).lower())
+                
+            if 'description' in layer['popupInfo'] and layer['popupInfo']['description'] is not None:
+                results = re.findall(r"\{.*\}", layer['popupInfo']['description'])
+                for result in results:
+                    layer['popupInfo']['description'] = str(layer['popupInfo']['description']).replace(result,str(result).lower())
+
+            if 'fieldInfos' in layer['popupInfo'] and layer['popupInfo']['fieldInfos'] is not None:
+                for field in layer['popupInfo']['fieldInfos']:
+                    field['fieldName'] = field['fieldName'].lower()
+
+            if 'mediaInfos' in layer['popupInfo'] and layer['popupInfo']['mediaInfos'] is not None:
+                for media_info in layer['popupInfo']['mediaInfos']:
+                    if 'title' in media_info and media_info['title'] is not None:
+                        results = re.findall(r"\{.*\}", media_info['title'])
+                        for result in results:
+                            media_info['title'] = str(media_info['title']).replace(result,str(result).lower())
+                    if 'caption' in media_info and media_info['caption'] is not None:
+                        results = re.findall(r"\{.*\}", media_info['caption'])
+                        for result in results:
+                            media_info['caption'] = str(media_info['caption']).replace(result,str(result).lower())
+                    if 'normalizeField' in media_info and media_info['normalizeField'] is not None:
+                        media_info['normalizeField'] = media_info['normalizeField'].lower()
+                    if 'fields' in media_info and media_info['fields'] is not None:
+                        media_info['fields'] = [field.lower() for field in media_info['fields']]
+
     def clone(self, target, extent=None, group_mapping={}, folder=None):  
         """Clone the item in the target organization.
         Keyword arguments:
@@ -1380,34 +1450,40 @@ class FeatureServiceDefinition(TextItemDefinition):
     def features(self):
         return copy.deepcopy(self._features)
 
-    def _add_features(self, layers, relationships):
+    def _add_features(self, target, layers, relationships):
         """Add the features from the definition to the layers returned from the cloned item.
         Keyword arguments:
         layers - Dictionary containing the id of the layer and its corresponding arcgis.lyr.FeatureLayer
         relationships - Dictionary containing the id of the layer and it's relationship definitions"""
 
-        features = self.features          
+        features = self.features   
         if features:
+            # If writing to Portal we need to change the case of the feature attribute field names
+            if target.properties.isPortal:
+                for id in features:
+                    for feature in features[id]:
+                        self._update_feature_attributes_for_portal(feature)
+
             # Add in chunks of 2000 features
             chunk_size = 2000
             layer_ids = [id for id in layers]
 
             # Find all the relates where the layer's role is the origin and the key field is the global id field
             # We want to process these first, get the new global ids that are created and update in related features before processing the relates
-            global_id_origin_relates = {}
-            for id in relationships:            
-                if id not in layers or 'globalIdField' not in layers[id].properties:
+            for id in relationships:                  
+                if id not in layer_ids or id not in layers:
                     continue
-                global_id_field = layers[id].properties['globalIdField']
-                relates = [relate for relate in relationships[id] if relate['role'] == 'esriRelRoleOrigin' and relate['keyField'] == global_id_field]
-                if len(relates) > 0:
-                    global_id_origin_relates[id] = relates
 
-            for id in global_id_origin_relates:
-                if id not in layer_ids:
+                admin_properties = layers[id].admin.properties  
+                if 'globalIdField' not in admin_properties:  
                     continue
+
+                global_id_field = admin_properties['globalIdField']
+                relates = [relate for relate in relationships[id] if relate['role'] == 'esriRelRoleOrigin' and relate['keyField'] == global_id_field]
+                if len(relates) == 0:
+                    continue
+
                 layer = layers[id]
-                global_id_field = layer.properties['globalIdField']
                 layer_features = features[str(id)]
                 if len(layer_features) == 0:
                     layer_ids.remove(id)
@@ -1423,7 +1499,7 @@ class FeatureServiceDefinition(TextItemDefinition):
                 # Create a mapping between the original global id and the new global id
                 global_id_mapping = { layer_features[i]['attributes'][global_id_field] : add_results[i]['globalId'] for i in range(0, len(layer_features)) }
 
-                for relate in global_id_origin_relates[id]:
+                for relate in relates:
                     related_layer_id = relate['relatedTableId']
                     if related_layer_id not in layer_ids:
                         continue
@@ -1497,10 +1573,11 @@ class FeatureServiceDefinition(TextItemDefinition):
                 # Need to remove relationships first and add them back individually 
                 # after all layers and tables have been added to the definition
                 if 'relationships' in layer and len(layer['relationships']) != 0:
-                    if 'layers' not in relationships:
-                        relationships['layers'] = []
-                    relationships['layers'].append({ 'id' : layer['id'], 'relationships': layer['relationships'] })
-                    layer['relationships'] = []   
+                    if target.properties.isPortal:
+                        for relationship in layer['relationships']:
+                            relationship['keyField'] = relationship['keyField'].lower()
+                    relationships[layer['id']] = layer['relationships']
+                    layer['relationships'] = []
 
                 # Need to remove all indexes duplicated for fields.
                 # Services get into this state due to a bug in 10.4 and 1.2
@@ -1516,7 +1593,10 @@ class FeatureServiceDefinition(TextItemDefinition):
                 # Set the extent of the feature layer to the specified default extent in web mercator
                 if layer['type'] == 'Feature Layer':
                     layer['extent'] = extent['web_mercator']
-            
+
+                if target.properties.isPortal:
+                    self._update_fields_for_portal(layer)
+        
             # Add the layer and table definitions to the service
             # Explicitly add layers first and then tables, otherwise sometimes json.dumps() reverses them and this effects the output service
             feature_service = lyr.FeatureService.fromitem(new_item)
@@ -1532,22 +1612,29 @@ class FeatureServiceDefinition(TextItemDefinition):
             # Add the relationships back to the layers
             if len(relationships) > 0:
                 if target.properties.isPortal:
-                    feature_service_admin.add_to_definition(relationships)
+                    relationships_definition = {'layers' : []}
+                    for id in relationships:
+                        relationships_definition['layers'].append({ 'id' : id, 'relationships' : relationships[id] })                
+                    feature_service_admin.add_to_definition(relationships_definition)  
                 else:
-                    for layer_relationship in relationships['layers']:
-                        layer = layers[layer_relationship['id']]
-                        layer.admin.add_to_definition({ 'relationships' : layer_relationship['relationships'] })
+                    for id in relationships:
+                        layer = layers[id]
+                        layer.admin.add_to_definition({'relationships' : relationships[id]})
 
             # Update the item definition of the service
             item_properties = self._get_item_properties()
             item_properties['extent'] = extent['wgs84']
             data = self.data
             if data:
+                if target.properties.isPortal:
+                    if 'layers' in data and data['layers'] is not None:
+                        for layer in data['layers']:
+                            self._update_fields_for_portal(layer)
                 item_properties['text'] = json.dumps(data)
             new_item.update(item_properties=item_properties, thumbnail=self.thumbnail)
     
             # Copy features from original item
-            self._add_features(layers, relationships)
+            self._add_features(target, layers, relationships)
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1615,6 +1702,7 @@ class WebMapDefinition(TextItemDefinition):
                         layer_id = os.path.basename(layer['url'])
                         layer['url'] = "{0}/{1}".format(service_mapping[original_url]['url'], layer_id)
                         layer['itemId'] = service_mapping[original_url]['id']
+                        self._update_fields_for_portal(layer)
                         break
 
             # Add the web map to the target portal
