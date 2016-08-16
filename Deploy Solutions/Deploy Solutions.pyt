@@ -1497,8 +1497,10 @@ class FeatureServiceDefinition(TextItemDefinition):
                 # Need to remove relationships first and add them back individually 
                 # after all layers and tables have been added to the definition
                 if 'relationships' in layer and len(layer['relationships']) != 0:
-                    relationships[layer['id']] = layer['relationships']
-                    layer['relationships'] = []
+                    if 'layers' not in relationships:
+                        relationships['layers'] = []
+                    relationships['layers'].append({ 'id' : layer['id'], 'relationships': layer['relationships'] })
+                    layer['relationships'] = []   
 
                 # Need to remove all indexes duplicated for fields.
                 # Services get into this state due to a bug in 10.4 and 1.2
@@ -1523,14 +1525,18 @@ class FeatureServiceDefinition(TextItemDefinition):
                 feature_service_admin.add_to_definition({'layers' : layers_definition['layers']})
             if len(layers_definition['tables']) > 0:
                 feature_service_admin.add_to_definition({'tables' : layers_definition['tables']})
-
+            
             # Create a lookup for the layers and tables using their id
             layers = { layer.properties['id'] : layer for layer in feature_service.layers + feature_service.tables }
-
-            # Add any relationship definitions back to the layers and tables
-            for id in relationships:
-                layer = layers[id]
-                layer.admin.add_to_definition({'relationships' : relationships[id]})
+                
+            # Add the relationships back to the layers
+            if len(relationships) > 0:
+                if target.properties.isPortal:
+                    feature_service_admin.add_to_definition(relationships)
+                else:
+                    for layer_relationship in relationships['layers']:
+                        layer = layers[layer_relationship['id']]
+                        layer.admin.add_to_definition({ 'relationships' : layer_relationship['relationships'] })
 
             # Update the item definition of the service
             item_properties = self._get_item_properties()
