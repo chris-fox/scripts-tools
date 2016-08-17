@@ -22,29 +22,18 @@ if __name__ == "__main__":
     for id in item_ids:
         item = source.content.get(id)
 
-        try:
-            print('Cloning {0}'.format(item['title']))
+        print('Cloning {0}'.format(item['title']))
             
-            # Specify the name of the folder to clone the items to. If it doesn't already exist it will be created.
-            folder_name = "Debug"
+        # Specify the name of the folder to clone the items to. If it doesn't already exist it will be created.
+        folder_name = "Test"
 
-            # Optionally provide an arcpy.Extent to set the output extent of the cloned items.
-            extent = None
+        # Optionally provide an arcpy.Extent to set the output extent of the cloned items.
+        extent = None
 
-            # Optionally specify whether the data from the original feature service should be copied to the cloned service.
-            copy_data = False
+        # Optionally specify whether the data from the original feature service should be copied to the cloned service.
+        copy_data = False
 
-            if deploy_solutions.clone_item(target, item, folder_name, extent, copy_data):
-                    print('Successfully cloned {0}'.format(item['title']))
-                    print('------------------------')
-            else:
-                print('Failed to clone {0}'.format(item['title']))
-                print('------------------------')
-        
-        except Exception as e:
-            print(str(e), 'Error')
-            print('Failed to clone {0}'.format(item['title']))
-            print('------------------------')
+        deploy_solutions.clone_item(target, item, folder_name, extent, copy_data)
 
 
 

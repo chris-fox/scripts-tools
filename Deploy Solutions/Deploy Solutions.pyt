@@ -52,8 +52,8 @@ class DeploySolutionsTool(object):
             direction="Input")
 
         param1 = arcpy.Parameter(
-            displayName="Business Need",
-            name="business_need",
+            displayName="Initiative",
+            name="initiative",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
@@ -67,26 +67,26 @@ class DeploySolutionsTool(object):
             multiValue=True)
 
         param3 = arcpy.Parameter(
-            displayName="Copy Sample Data",
-            name="copy_sample_data",
-            datatype="GPBoolean",
-            parameterType="Optional",
-            direction="Input")
-        param3.value = False
-
-        param4 = arcpy.Parameter(
             displayName="Folder",
             name="folder",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
-        param5 = arcpy.Parameter(
+        param4 = arcpy.Parameter(
             displayName="Area of Interest",
             name="area_of_interest",
             datatype="GPExtent",
             parameterType="Optional",
             direction="Input")
+
+        param5 = arcpy.Parameter(
+            displayName="Copy Sample Data",
+            name="copy_sample_data",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param5.value = False
 
         param6 = arcpy.Parameter(
             displayName="Validation JSON",
@@ -118,7 +118,7 @@ class DeploySolutionsTool(object):
 
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
-                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'solutions' : solutions, 'folders' : folders }
                 parameters[6].value = json.dumps(validation_json)
 
@@ -152,13 +152,13 @@ class DeploySolutionsTool(object):
             parameters[2].filter.list = sorted(items)
             parameters[2].value = arcpy.ValueTable()
 
-        if not parameters[4].hasBeenValidated:
+        if not parameters[3].hasBeenValidated:
             validation_json = json.loads(parameters[6].valueAsText)  
             folders = validation_json['folders']
-            if parameters[4].value:
-                parameters[4].filter.list = sorted(set([parameters[4].valueAsText] + [folder['title'] for folder in folders]))
+            if parameters[3].value:
+                parameters[3].filter.list = sorted(set([parameters[3].valueAsText] + [folder['title'] for folder in folders]))
             else:
-                parameters[4].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[3].filter.list = sorted([folder['title'] for folder in folders])
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
@@ -178,7 +178,7 @@ class DeploySolutionsTool(object):
         
         source = gis.GIS()
 
-        # Get the input parameters for creating from local items on disk
+        # Get the input parameters
         industry = parameters[0].valueAsText
         solution_group = parameters[1].valueAsText
         value_table = parameters[2].value
@@ -186,57 +186,35 @@ class DeploySolutionsTool(object):
         for i in range(0, value_table.rowCount):
             solution = value_table.getValue(i, 0)
             if solution not in solutions:
-                solutions.append(solution)   
-        copy_data = parameters[3].value
-        output_folder = parameters[4].valueAsText
-        extent = parameters[5].value
+                solutions.append(solution)       
+        output_folder = parameters[3].valueAsText
+        extent = parameters[4].value
+        copy_data = parameters[5].value
         parameters[6].value = ''
     
         for solution in solutions:
-            try:
-                deploy_message = 'Deploying {0}'.format(solution)
-                _add_message(deploy_message)
-                arcpy.SetProgressor('default', deploy_message)                           
+            deploy_message = 'Deploying {0}'.format(solution)
+            _add_message(deploy_message)
+            arcpy.SetProgressor('default', deploy_message)                           
 
-                # Search for the industry group
-                search_query = 'accountid:{0} AND tags:"{1}" AND title:"{2}"'.format(PORTAL_ID, TAG, industry)
-                groups = source.groups.search(search_query)
-                if len(groups) == 0:
-                    _add_message("Failed to find group {0} in the source organization".format(industry), 'Error')
-                    _add_message('------------------------')
-                    continue
-
-                # Search for the solution the source organization within the industry group using the title of the item.
-                search_query = 'accountid:{0} AND group:"{1}" AND title:"{2}"'.format(PORTAL_ID, groups[0]['id'], solution)
-                items = source.content.search(search_query)
-                solution_item = next((item for item in items if item.title == solution), None)
-                if not solution_item:
-                    _add_message("Failed to find solution {0}".format(solution), 'Error')
-                    _add_message('------------------------')
-                    continue
-
-                # Check if the item has already been cloned into the target portal and if so, continue on to the next map or app.
-                folders = target.users.me.folders
-                folder = next((folder for folder in folders if folder['title'] == output_folder), None)
-                if folder:
-                    folder_items = target.users.me.items(output_folder)
-                    existing_item = _get_existing_item(solution_item, folder_items)
-                    if existing_item:
-                        _add_message("{0} already exists in {1} folder".format(solution_item['title'], output_folder))
-                        _add_message('------------------------')
-                        continue
-
-                if clone_item(target, solution_item, output_folder, extent, copy_data):
-                    _add_message('Successfully added {0}'.format(solution))
-                    _add_message('------------------------')
-                else:
-                    _add_message('Failed to add {0}'.format(solution), 'Error')
-                    _add_message('------------------------')
-
-            except Exception as e:
-                _add_message(str(e), 'Error')
-                _add_message('Failed to add {0}'.format(solution), 'Error')
+            # Search for the industry group
+            search_query = 'accountid:{0} AND tags:"{1}" AND title:"{2}"'.format(PORTAL_ID, TAG, industry)
+            groups = source.groups.search(search_query)
+            if len(groups) == 0:
+                _add_message("Failed to find group {0} in the source organization".format(industry), 'Error')
                 _add_message('------------------------')
+                continue
+
+            # Search for the solution the source organization within the industry group using the title of the item.
+            search_query = 'accountid:{0} AND group:"{1}" AND title:"{2}"'.format(PORTAL_ID, groups[0]['id'], solution)
+            items = source.content.search(search_query)
+            solution_item = next((item for item in items if item.title == solution), None)
+            if not solution_item:
+                _add_message("Failed to find solution {0}".format(solution), 'Error')
+                _add_message('------------------------')
+                continue
+
+            clone_item(target, solution_item, output_folder, extent, copy_data)
 
 class CloneItemsTool(object):
     def __init__(self):
@@ -255,26 +233,26 @@ class CloneItemsTool(object):
             multiValue=True)
 
         param1 = arcpy.Parameter(
-            displayName="Copy Data",
-            name="copy_data",
-            datatype="GPBoolean",
-            parameterType="Optional",
-            direction="Input")
-        param1.value = False
-
-        param2 = arcpy.Parameter(
             displayName="Folder",
             name="folder",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
-        param3 = arcpy.Parameter(
+        param2 = arcpy.Parameter(
             displayName="Area of Interest",
             name="area_of_interest",
             datatype="GPExtent",
             parameterType="Optional",
             direction="Input")
+
+        param3 = arcpy.Parameter(
+            displayName="Copy Data",
+            name="copy_data",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input")
+        param3.value = False
 
         param4 = arcpy.Parameter(
             displayName="Validation JSON",
@@ -298,17 +276,17 @@ class CloneItemsTool(object):
             if not parameters[4].value:
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
-                parameters[2].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[1].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'folders' : folders }
                 parameters[4].value = json.dumps(validation_json)
 
-        if not parameters[2].hasBeenValidated:
+        if not parameters[1].hasBeenValidated:
             validation_json = json.loads(parameters[4].valueAsText)  
             folders = validation_json['folders']
-            if parameters[2].value:
-                parameters[2].filter.list = sorted(set([parameters[2].valueAsText] + [folder['title'] for folder in folders]))
+            if parameters[1].value:
+                parameters[1].filter.list = sorted(set([parameters[1].valueAsText] + [folder['title'] for folder in folders]))
             else:
-                parameters[2].filter.list = sorted([folder['title'] for folder in folders])
+                parameters[1].filter.list = sorted([folder['title'] for folder in folders])
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
@@ -335,46 +313,24 @@ class CloneItemsTool(object):
             item_id = value_table.getValue(i, 0)
             if item_id not in item_ids:
                 item_ids.append(item_id)   
-        copy_data = parameters[1].value
-        output_folder = parameters[2].valueAsText
-        extent = parameters[3].value
+        output_folder = parameters[1].valueAsText
+        extent = parameters[2].value
+        copy_data = parameters[3].value
         parameters[4].value = ''
 
         for item_id in item_ids:
             try:
-                try:
-                    item = source.content.get(item_id)
-                except RuntimeError as e:
-                    _add_message("Failed to get item {0}: {1}".format(item_id, str(e)), 'Error')
-                    _add_message('------------------------')
-                    continue
-
-                deploy_message = 'Cloning {0}'.format(item['title'])
-                _add_message(deploy_message)
-                arcpy.SetProgressor('default', deploy_message)                           
-
-                # Check if the item has already been cloned into the target portal and if so, continue on to the next map or app.
-                folders = target.users.me.folders
-                folder = next((folder for folder in folders if folder['title'] == output_folder), None)
-                if folder:
-                    folder_items = target.users.me.items(output_folder)
-                    existing_item = _get_existing_item(item, folder_items)
-                    if existing_item:
-                        _add_message("{0} already exists in {1} folder".format(item['title'], output_folder))
-                        _add_message('------------------------')
-                        continue
-
-                if clone_item(target, item, output_folder, extent):
-                    _add_message('Successfully cloned {0}'.format(item['title']))
-                    _add_message('------------------------')
-                else:
-                    _add_message('Failed to clone {0}'.format(item['title']), 'Error')
-                    _add_message('------------------------')
-
-            except Exception as e:
-                _add_message(str(e), 'Error')
-                _add_message('Failed to clone {0}'.format(item['title']), 'Error')
+                item = source.content.get(item_id)
+            except RuntimeError as e:
+                _add_message("Failed to get item {0}: {1}".format(item_id, str(e)), 'Error')
                 _add_message('------------------------')
+                continue
+
+            deploy_message = 'Cloning {0}'.format(item['title'])
+            _add_message(deploy_message)
+            arcpy.SetProgressor('default', deploy_message)                           
+
+            clone_item(target, item, output_folder, extent, copy_data)
 
 class DeploySolutionsLocalTool(object):
     def __init__(self):
@@ -1702,7 +1658,8 @@ class WebMapDefinition(TextItemDefinition):
                         layer_id = os.path.basename(layer['url'])
                         layer['url'] = "{0}/{1}".format(service_mapping[original_url]['url'], layer_id)
                         layer['itemId'] = service_mapping[original_url]['id']
-                        self._update_fields_for_portal(layer)
+                        if target.properties.isPortal:
+                            self._update_fields_for_portal(layer)
                         break
 
             # Add the web map to the target portal
@@ -1845,6 +1802,21 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
     created_items = []
 
     try:
+        # Check if the item has already been cloned into the target portal  
+        folder_items = []
+        folders = target.users.me.folders
+        folder = next((folder for folder in folders if folder['title'] == folder_name), None)
+        if folder:
+            folder_items = target.users.me.items(folder_name)
+            existing_item = _get_existing_item(item, folder_items)
+            if existing_item:
+                _add_message("{0} already exists in {1} folder".format(item['title'], folder_name))
+                _add_message('------------------------')
+                return
+        #If the folder does not already exist create a new folder
+        else:
+            folder = target.content.create_folder(folder_name)
+
         # Get the definitions associated with the item
         item_definitions = []
         _get_item_definitions(item, item_definitions, copy_data)
@@ -1858,9 +1830,6 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
         folder = next((folder for folder in folders if folder['title'] == folder_name), None)
         if not folder:
             folder = target.content.create_folder(folder_name)
-
-        # Get the all items in the folder
-        folder_items = target.users.me.items(folder['title'])
 
         # Clone the groups
         for group in [group for group in item_definitions if isinstance(group, GroupDefinition)]:
@@ -1933,7 +1902,8 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
             else:
                 _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))            
 
-        return True
+        _add_message('Successfully added {0}'.format(item['title']))
+        _add_message('------------------------')
 
     except Exception as e:
         if type(e) == ItemCreateException:
@@ -1945,8 +1915,10 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
 
         for solution_item in created_items:
             if solution_item.delete():
-                _add_message("Deleted {0}".format(solution_item.title))
-        return False
+                _add_message("Deleted {0}".format(solution_item['title']))
+                
+        _add_message('Failed to add {0}'.format(item['title']), 'Error')
+        _add_message('------------------------')
 
 #endregion
 
