@@ -1938,7 +1938,7 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
     except Exception as e:
         if type(e) == ItemCreateException:
             _add_message(e.args[0], 'Error')
-            if e.args[1]:
+            if e.args[1] is not None:
                 created_items.append(e.args[1])
         else:
             _add_message(str(e), 'Error')
