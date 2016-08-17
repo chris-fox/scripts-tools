@@ -1334,7 +1334,7 @@ class TextItemDefinition(ItemDefinition):
             if 'renderer' in layer['drawingInfo'] and layer['drawingInfo']['renderer'] is not None:
                 renderer = layer['drawingInfo']['renderer']
                 if renderer['type'] == 'uniqueValue':
-                    i == 0
+                    i = 0
                     while 'field{0}'.format(i) in renderer:
                         renderer['field{0}'.format(i)] = renderer['field{0}'.format(i)].lower()
                         i += 1
