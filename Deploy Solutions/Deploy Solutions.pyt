@@ -74,28 +74,21 @@ class DeploySolutionsTool(object):
             direction="Input")
 
         param4 = arcpy.Parameter(
-            displayName="Area of Interest",
-            name="area_of_interest",
-            datatype="GPExtent",
-            parameterType="Optional",
-            direction="Input")
-
-        param5 = arcpy.Parameter(
             displayName="Copy Sample Data",
             name="copy_sample_data",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
-        param5.value = False
+        param4.value = False
 
-        param6 = arcpy.Parameter(
+        param5 = arcpy.Parameter(
             displayName="Validation JSON",
             name="validation_json",
             datatype="GPString",
             parameterType="Derived",
             direction="Output")
 
-        params = [param0, param1, param2, param3, param4, param5, param6]
+        params = [param0, param1, param2, param3, param4, param5]
         return params
 
     def isLicensed(self):
@@ -107,7 +100,7 @@ class DeploySolutionsTool(object):
         validation is performed.  This method is called whenever a parameter
         has been changed."""
         if not parameters[0].hasBeenValidated:
-            if not parameters[6].value:
+            if not parameters[5].value:
                 source = gis.GIS()
                 search_query = 'accountid:{0} AND tags:"{1}"'.format(PORTAL_ID, TAG)
                 groups = source.groups.search(search_query, outside_org=False)
@@ -120,10 +113,10 @@ class DeploySolutionsTool(object):
                 folders = target.users.me.folders
                 parameters[3].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'solutions' : solutions, 'folders' : folders }
-                parameters[6].value = json.dumps(validation_json)
+                parameters[5].value = json.dumps(validation_json)
 
             if parameters[0].value:
-                validation_json = json.loads(parameters[6].value)
+                validation_json = json.loads(parameters[5].value)
                 industry = parameters[0].valueAsText
                 if not validation_json['solutions'][industry]['solution_groups']:
                     source = gis.GIS()
@@ -138,13 +131,13 @@ class DeploySolutionsTool(object):
                             solutions[solution_group].append(item.title)
                     parameters[1].filter.list = sorted([solution_group for solution_group in solutions])
                     validation_json['solutions'][industry]['solution_groups'] = solutions
-                    parameters[6].value = json.dumps(validation_json)
+                    parameters[5].value = json.dumps(validation_json)
                 else:
                     parameters[1].filter.list = sorted([solution_group for solution_group in validation_json['solutions'][industry]['solution_groups']])
             parameters[1].value = None
 
         if parameters[0].value and not parameters[1].hasBeenValidated and parameters[1].value:
-            validation_json = json.loads(parameters[6].valueAsText)  
+            validation_json = json.loads(parameters[5].valueAsText)  
             solutions = validation_json['solutions']
             industry = parameters[0].valueAsText   
             solution_group = parameters[1].valueAsText
@@ -153,7 +146,7 @@ class DeploySolutionsTool(object):
             parameters[2].value = arcpy.ValueTable()
 
         if not parameters[3].hasBeenValidated:
-            validation_json = json.loads(parameters[6].valueAsText)  
+            validation_json = json.loads(parameters[5].valueAsText)  
             folders = validation_json['folders']
             if parameters[3].value:
                 parameters[3].filter.list = sorted(set([parameters[3].valueAsText] + [folder['title'] for folder in folders]))
@@ -188,9 +181,8 @@ class DeploySolutionsTool(object):
             if solution not in solutions:
                 solutions.append(solution)       
         output_folder = parameters[3].valueAsText
-        extent = parameters[4].value
-        copy_data = parameters[5].value
-        parameters[6].value = ''
+        copy_data = parameters[4].value
+        parameters[5].value = ''
     
         for solution in solutions:
             deploy_message = 'Deploying {0}'.format(solution)
@@ -214,7 +206,7 @@ class DeploySolutionsTool(object):
                 _add_message('------------------------')
                 continue
 
-            clone_item(target, solution_item, output_folder, extent, copy_data)
+            clone_item(target, solution_item, output_folder, None, copy_data)
 
 class CloneItemsTool(object):
     def __init__(self):
