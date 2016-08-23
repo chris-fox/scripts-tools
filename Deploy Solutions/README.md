@@ -2,11 +2,8 @@
 1. [Download](https://github.com/chris-fox/scripts-tools/archive/master.zip) or Clone this repo
 2. Install ArcGIS Pro 1.3
 3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. Run it as an administrator.
-4. Run the following commands. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
+4. Run the following command. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
    
-    ```
-    conda install -c conda-forge ipywidgets
-    ```
     ```
     conda install -c esri arcgis=0.1
     ```
