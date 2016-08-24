@@ -1673,6 +1673,19 @@ class WebMapDefinition(TextItemDefinition):
                             self._update_fields_for_portal(layer)
                         break
 
+            # Change the basemap to the default basemap defined in the target organization
+            properties = target.properties
+            if 'defaultBasemap' in properties and properties['defaultBasemap'] is not None:
+                default_basemap = properties['defaultBasemap']
+                if 'title' in default_basemap and 'baseMapLayers' in default_basemap and default_basemap['baseMapLayers'] is not None:
+                    for key in [k for k in default_basemap]:
+                        if key not in ['title', 'baseMapLayers']:
+                            del default_basemap[key]
+                    for basemap_layer in default_basemap['baseMapLayers']:
+                        if 'resourceInfo' in basemap_layer:
+                            del basemap_layer['resourceInfo']
+                    webmap_json['baseMap'] = default_basemap
+
             # Add the web map to the target portal
             item_properties['text'] = json.dumps(webmap_json)
             with tempfile.TemporaryDirectory() as temp_dir:
