@@ -1101,8 +1101,13 @@ class GroupDefinition(object):
                 i += 1
                 title = "{0} {1}".format(original_group['title'], i)
         
-            new_group = target.groups.create(title, tags, original_group['description'], original_group['snippet'],
-                                             'private', self.thumbnail, True, original_group['sortField'], original_group['sortOrder'], True)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                thumbnail = self.thumbnail
+                if not thumbnail and self.portal_group:
+                    thumbnail = self.portal_group.download_thumbnail(temp_dir)
+
+                new_group = target.groups.create(title, tags, original_group['description'], original_group['snippet'],
+                                             'private', thumbnail, True, original_group['sortField'], original_group['sortOrder'], True)
             return new_group
         except Exception as e:
             raise ItemCreateException("Failed to create group '{0}': {1}".format(original_group['title'], str(e)), new_group)
@@ -1221,8 +1226,12 @@ class ItemDefinition(object):
                     os.rename(data, new_path)
                     data = new_path
 
+                thumbnail = self.thumbnail
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+
                 # Add the new item
-                new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=self.thumbnail, folder=folder['title'])
+                new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1351,7 +1360,12 @@ class TextItemDefinition(ItemDefinition):
             data = self.data
             if data:
                 item_properties['text'] = json.dumps(data)
-            new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                thumbnail = self.thumbnail
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1579,7 +1593,12 @@ class FeatureServiceDefinition(TextItemDefinition):
                         for layer in data['layers']:
                             self._update_fields_for_portal(layer)
                 item_properties['text'] = json.dumps(data)
-            new_item.update(item_properties=item_properties, thumbnail=self.thumbnail)
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                thumbnail = self.thumbnail
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+                new_item.update(item_properties=item_properties, thumbnail=thumbnail)
     
             # Copy features from original item
             self._add_features(target, layers, relationships)
@@ -1656,7 +1675,11 @@ class WebMapDefinition(TextItemDefinition):
 
             # Add the web map to the target portal
             item_properties['text'] = json.dumps(webmap_json)
-            new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
+            with tempfile.TemporaryDirectory() as temp_dir:
+                thumbnail = self.thumbnail
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -1725,7 +1748,11 @@ class ApplicationDefinition(TextItemDefinition):
                 item_properties['text'] = json.dumps(app_json)
 
             # Add the application to the target portal
-            new_item = target.content.add(item_properties=item_properties, thumbnail=self.thumbnail, folder=folder['title'])
+            with tempfile.TemporaryDirectory() as temp_dir:
+                thumbnail = self.thumbnail
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Update the url of the item to point to the new portal and new id of the application
             if original_item['url']:
@@ -2143,7 +2170,7 @@ def _get_group_definition(group):
     """Get an instance of the group definition for the specified item. This definition can be used to clone or download the group.
     Keyword arguments:
     group - The arcgis.GIS.Group to get the definition for.""" 
-    return GroupDefinition(dict(group), thumbnail=group.get_thumbnail_link(), portal_group=group)
+    return GroupDefinition(dict(group), thumbnail=None, portal_group=group)
 
 def _get_item_defintion(item, copy_data=False):
     """Get an instance of the corresponding definition class for the specified item. This definition can be used to clone or download the item.
@@ -2154,12 +2181,12 @@ def _get_item_defintion(item, copy_data=False):
     # If the item is an application or dashboard get the ApplicationDefinition
     if item['type'] in ['Web Mapping Application','Operation View']:
         app_json = item.get_data()
-        return ApplicationDefinition(dict(item), data=app_json, thumbnail=item.get_thumbnail_link(), portal_item=item)
+        return ApplicationDefinition(dict(item), data=app_json, thumbnail=None, portal_item=item)
       
     # If the item is a web map get the WebMapDefintion
     elif item['type'] == 'Web Map':
         webmap_json = item.get_data()
-        return WebMapDefinition(dict(item), data=webmap_json, thumbnail=item.get_thumbnail_link(), portal_item=item)
+        return WebMapDefinition(dict(item), data=webmap_json, thumbnail=None, portal_item=item)
 
     # If the item is a feature service get the FeatureServiceDefintion
     elif item['type'] == 'Feature Service':
@@ -2183,14 +2210,14 @@ def _get_item_defintion(item, copy_data=False):
             for layer in svc.layers + svc.tables:
                 features[str(layer.properties['id'])] = _get_features(layer)
 
-        return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=features, data=data, thumbnail=item.get_thumbnail_link(), portal_item=item)
+        return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=features, data=data, thumbnail=None, portal_item=item)
 
     # For all other types get the corresponding definition
     else:
         if item['type'] in TEXT_BASED_ITEM_TYPES:
-            return TextItemDefinition(dict(item), data=item.get_data(), thumbnail=item.get_thumbnail_link(), portal_item=item)
+            return TextItemDefinition(dict(item), data=item.get_data(), thumbnail=None, portal_item=item)
         else:
-            return ItemDefinition(dict(item), data=None, thumbnail=item.get_thumbnail_link(), portal_item=item)
+            return ItemDefinition(dict(item), data=None, thumbnail=None, portal_item=item)
 
 def _add_message(message, type='Info'):
     """Add a message to the output"""
