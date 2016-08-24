@@ -1520,7 +1520,7 @@ class FeatureServiceDefinition(TextItemDefinition):
             for layer in layers_definition['layers'] + layers_definition['tables']:
                 # Need to remove relationships first and add them back individually 
                 # after all layers and tables have been added to the definition
-                if 'relationships' in layer and len(layer['relationships']) != 0:
+                if 'relationships' in layer and layer['relationships'] is not None and len(layer['relationships']) != 0:
                     if target.properties.isPortal:
                         for relationship in layer['relationships']:
                             relationship['keyField'] = relationship['keyField'].lower()
