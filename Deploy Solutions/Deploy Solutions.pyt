@@ -1436,11 +1436,11 @@ class FeatureServiceDefinition(TextItemDefinition):
                 if id not in layer_ids or id not in layers:
                     continue
 
-                admin_properties = layers[id].admin.properties  
-                if 'globalIdField' not in admin_properties:  
+                properties = layers[id].properties  
+                if 'globalIdField' not in properties:  
                     continue
 
-                global_id_field = admin_properties['globalIdField']
+                global_id_field = properties['globalIdField']
                 relates = [relate for relate in relationships[id] if relate['role'] == 'esriRelRoleOrigin' and relate['keyField'] == global_id_field]
                 if len(relates) == 0:
                     continue
