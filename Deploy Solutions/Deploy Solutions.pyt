@@ -1518,12 +1518,11 @@ class FeatureServiceDefinition(TextItemDefinition):
                 name = "{0}_{1}".format(original_item['name'], str(uuid.uuid4()).replace('-',''))       
             service_definition['name'] = name
     
-            for key in ['layers', 'tables']:
+            for key in ['layers', 'tables', 'fullExtent']:
                 if key in service_definition:
                     del service_definition[key]
             service_definition['initialExtent'] = extent['web_mercator']
-            service_definition['spatialReference'] = { "spatialReference" : {
-		                                    "wkid" : 102100, "latestWkid" : 3857}}
+            service_definition['spatialReference'] = extent['web_mercator']['spatialReference']
 
             # Create a new feature service
             new_item = target.content.create_service(name, service_type='featureService', create_params=service_definition, folder=folder['title'])
@@ -2292,8 +2291,7 @@ def _get_extent_definition(target, extent=None):
 				    "ymin" : extent_web_mercator.YMin,
 				    "xmax" : extent_web_mercator.XMax,
 				    "ymax" : extent_web_mercator.YMax,
-				    "spatialReference" : {
-					    "wkid" : 102100 } } }
+				    "spatialReference" : {'latestWkid': 3857, 'wkid': 102100} } }
 
     return extent_dict
 
