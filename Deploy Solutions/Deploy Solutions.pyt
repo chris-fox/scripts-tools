@@ -1056,6 +1056,47 @@ class OpenWebMap(object):
         except Exception as e:
             arcpy.AddError("Failed to open url: {0}".format(str(e)))
 
+def _get_fields(parameter):
+    feature_layer = _get_feature_layer(parameter)
+
+    if feature_layer in ["Invalid URL", "Failed To Connect"]:
+        return feature_layer
+
+    return json.dumps(feature_layer.properties['fields'])
+
+def _get_feature_layer(parameter):
+    url = None
+    desc = arcpy.Describe(parameter.value)
+    url = desc.path
+
+    if not url.endswith('/FeatureServer'):
+        return "Invalid URL"
+
+    if url.startswith('GIS Servers\\'):
+        url = 'https://{0}'.format(url[len('GIS Servers\\'):])
+
+    try:
+        layer_id = int(desc.name)
+    except:
+        name = desc.name[1:]
+        layer_id = ''
+        for c in name:
+            if c in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+                layer_id += c
+            else:
+                break
+        layer_id = int(layer_id)
+
+    try:
+        feature_service = lyr.FeatureService(url, gis.GIS('pro'))
+        feature_layer = next((layer for layer in feature_service.layers + feature_service.tables if layer.properties['id'] == layer_id), None)
+        if not feature_layer or 'serviceItemId' not in feature_service.properties:
+            return "Invalid URL"
+        
+        return feature_layer
+    except:
+        return "Failed To Connect"
+
 #endregion
 
 #region Group and Item Definition Classes
@@ -1073,8 +1114,8 @@ class GroupDefinition(object):
     def clone(self, target, linked_folder=None):
         """Clone the group in the target organization.
         Keyword arguments:
-        connection - Dictionary containing connection info to the target portal
-        linked_folder - The folder containing the associated solution items that will be shared with the new group"""
+        target - The instance of arcgis.gis.GIS (the portal) to group to.
+        linked_folder - The folder containing the associated items that will be shared with the new group"""
     
         try:
             new_group = None
@@ -1196,12 +1237,13 @@ class ItemDefinition(object):
                     groups.append(group_mapping[group])
             new_item.share(everyone, org, ','.join(groups))
 
-    def clone(self, target, extent=None, group_mapping={}, folder=None):  
+    def clone(self, target, folder, extent=None, group_mapping={}):  
         """Clone the item in the target organization.
         Keyword arguments:
-        connection - Dictionary containing connection info to the target portal
+        target - The instance of arcgis.gis.GIS (the portal) to clone the item to.
+        folder - The folder to create the item in
         group_mapping - Dictionary containing the id of the original group and the id of the new group
-        folder - The folder to create the item in"""
+        """
     
         try:
             new_item = None
@@ -1394,12 +1436,13 @@ class TextItemDefinition(ItemDefinition):
             if 'parameterizedExpression' in layer['definitionEditor'] and layer['definitionEditor']['parameterizedExpression'] is not None:
                 layer['definitionEditor']['parameterizedExpression'] = self._find_and_replace_fields(layer['definitionEditor']['parameterizedExpression'], field_mapping)
 
-    def clone(self, target, extent=None, group_mapping={}, folder=None):  
+    def clone(self, target, folder, extent=None, group_mapping={}):  
         """Clone the item in the target organization.
         Keyword arguments:
-        connection - Dictionary containing connection info to the target portal
+        target - The instance of arcgis.gis.GIS (the portal) to clone the item to.
+        folder - The folder to create the item in
         group_mapping - Dictionary containing the id of the original group and the id of the new group
-        folder - The folder to create the item in"""
+        """
     
         try:
             new_item = None
@@ -1549,13 +1592,14 @@ class FeatureServiceDefinition(TextItemDefinition):
                 for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
                     layers[id].edit_features(adds=features_chunk)
 
-    def clone(self, target, extent, group_mapping={}, folder=None):
+    def clone(self, target, folder, extent, group_mapping={}):
         """Clone the feature service in the target organization.
         Keyword arguments:
-        connection - Dictionary containing connection info to the target portal
-        group_mapping - Dictionary containing the id of the original group and the id of the new group
-        extent - Default extent of the new feature service in WGS84
-        folder - The folder to create the service in"""
+        target - The instance of arcgis.gis.GIS (the portal) to clone the feature service to.
+        folder - The folder to create the service in
+        extent - Default extent of the new feature service
+        group_mapping - Dictionary containing the id of the original group and the id of the new group   
+        """
 
         try:
             new_item = None
@@ -1737,14 +1781,15 @@ class WebMapDefinition(TextItemDefinition):
     Represents the definition of a web map within ArcGIS Online or Portal.
     """
 
-    def clone(self, target, extent, group_mapping={}, service_mapping={}, folder=None):  
+    def clone(self, target, folder, extent, group_mapping={}, service_mapping={}):  
         """Clone the web map in the target organization.
         Keyword arguments:
-        connection - Dictionary containing connection info to the target portal
+        target - The instance of arcgis.gis.GIS (the portal) to clone the web map to
+        folder - The folder to create the web map in
+        extent - Default extent of the new web map
         group_mapping - Dictionary containing the id of the original group and the id of the new group
-        service_mapping - Dictionary containing the mapping between the original service url and new service item id and url
-        extent - Default extent of the new web map in WGS84
-        folder - The folder to create the web map in"""
+        service_mapping - Dictionary containing the mapping between the original service url and new service item id and url       
+        """
     
         try:
             new_item = None
@@ -1808,14 +1853,15 @@ class ApplicationDefinition(TextItemDefinition):
     Represents the definition of an application within ArcGIS Online or Portal.
     """
     
-    def clone(self, target, group_mapping={}, service_mapping={}, webmap_mapping={}, folder=None):
+    def clone(self, target, folder, group_mapping={}, service_mapping={}, webmap_mapping={}):
         """Clone the application in the target orgnaization.
         Keyword arguments:
-        connection - Dictionary containing connection info to the target portal
+        target - The instance of arcgis.gis.GIS (the portal) to clone the web map to
+        folder - The folder to create the application in
         group_mapping - Dictionary containing the id of the original group and the id of the new group
         service_mapping - Dictionary containing the mapping between the original service url and new service item id and url
         webmap_mapping - Dictionary containing a mapping between the original web map id and new web map id
-        folder - The folder to create the application in"""  
+        """  
     
         try:
             new_item = None
@@ -1994,7 +2040,7 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
             layer_field_mapping = {}
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                     
-                new_item, layer_field_mapping = feature_service.clone(target, default_extent, group_mapping, folder)
+                new_item, layer_field_mapping = feature_service.clone(target, folder, default_extent, group_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2021,7 +2067,7 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
           
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:
-                new_item = webmap.clone(target, default_extent, group_mapping, service_mapping, folder)
+                new_item = webmap.clone(target, folder, default_extent, group_mapping, service_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2035,7 +2081,7 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                   
-                new_item = application.clone(target, group_mapping, service_mapping, webmap_mapping, folder)
+                new_item = application.clone(target, folder, group_mapping, service_mapping, webmap_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2047,7 +2093,7 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                   
-                new_item = item.clone(target, default_extent, group_mapping, folder)
+                new_item = item.clone(target, folder, default_extent, group_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2437,46 +2483,5 @@ def _get_existing_group(target, group, linked_folder):
     if len(groups) > 0:
         return groups[0]
     return None
-
-def _get_fields(parameter):
-    feature_layer = _get_feature_layer(parameter)
-
-    if feature_layer in ["Invalid URL", "Failed To Connect"]:
-        return feature_layer
-
-    return json.dumps(feature_layer.properties['fields'])
-
-def _get_feature_layer(parameter):
-    url = None
-    desc = arcpy.Describe(parameter.value)
-    url = desc.path
-
-    if not url.endswith('/FeatureServer'):
-        return "Invalid URL"
-
-    if url.startswith('GIS Servers\\'):
-        url = 'https://{0}'.format(url[len('GIS Servers\\'):])
-
-    try:
-        layer_id = int(desc.name)
-    except:
-        name = desc.name[1:]
-        layer_id = ''
-        for c in name:
-            if c in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
-                layer_id += c
-            else:
-                break
-        layer_id = int(layer_id)
-
-    try:
-        feature_service = lyr.FeatureService(url, gis.GIS('pro'))
-        feature_layer = next((layer for layer in feature_service.layers + feature_service.tables if layer.properties['id'] == layer_id), None)
-        if not feature_layer or 'serviceItemId' not in feature_service.properties:
-            return "Invalid URL"
-        
-        return feature_layer
-    except:
-        return "Failed To Connect"
 
 #endregion
