@@ -1676,6 +1676,17 @@ class FeatureServiceDefinition(TextItemDefinition):
                 if len(field_mapping) > 0:
                     layer_field_mapping[id] = field_mapping
 
+            # Update editing templates if field mapping is required
+            for layer_id in layer_field_mapping:
+                layer = new_layers[layer_id]
+                if 'templates' in layer.properties:
+                    templates = layer.properties['templates']
+                    field_mapping = layer_field_mapping[layer_id]
+                    for template in templates:
+                        if 'prototype' in template and template['prototype'] is not None:
+                            self._update_feature_attributes(template['prototype'], field_mapping)
+                    layer.admin.update_definition({'templates' : templates})
+
             # Add the relationships back to the layers
             if len(relationships) > 0:
                 for id in relationships:
