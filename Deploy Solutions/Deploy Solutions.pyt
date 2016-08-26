@@ -1838,7 +1838,9 @@ class ApplicationDefinition(TextItemDefinition):
                 if 'httpProxy' in app_json:
                     if 'url' in app_json['httpProxy']:
                         app_json['httpProxy']['url'] = portal_url + "sharing/proxy"
-        
+                if 'geometryService' in app_json and 'geometry' in target.properties['helperServices']:
+                    app_json['geometryService'] = target.properties['helperServices']['geometry']['url']
+
                 app_json_text = json.dumps(app_json)        
                 for service in service_mapping:
                     app_json_text = re.sub(service, service_mapping[service]['url'], app_json_text, 0, re.IGNORECASE)
