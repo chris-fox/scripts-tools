@@ -1670,6 +1670,8 @@ class FeatureServiceDefinition(TextItemDefinition):
                 id = layer['id']
                 fields = layer['fields']
                 field_mapping = {}
+                if len(fields) > len(new_layers[id].properties['fields']):
+                    continue
                 for i in range(0, len(fields)):
                     if fields[i]['name'] != new_layers[id].properties['fields'][i]['name']:
                         field_mapping[fields[i]['name']] = new_layers[id].properties['fields'][i]['name']
