@@ -1135,7 +1135,7 @@ class GroupDefinition(object):
             #Find a unique name for the group
             i = 1    
             while True:
-                search_query = 'title:"{0}"'.format(title)
+                search_query = 'title:"{0}" AND owner:{1}'.format(title, target.users.me.username)
                 groups = [group for group in target.groups.search(search_query, outside_org=False) if group['title'] == title]
                 if len(groups) == 0 :
                     break
