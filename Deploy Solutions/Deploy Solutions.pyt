@@ -206,7 +206,7 @@ class DeploySolutionsTool(object):
                 _add_message('------------------------')
                 continue
 
-            clone_item(target, solution_item, output_folder, None, copy_data)
+            clone_item(target, solution_item, output_folder, copy_data, arcpy.env.extent, arcpy.env.outputCoordinateSystem )
 
 class CloneItemsTool(object):
     def __init__(self):
@@ -232,28 +232,21 @@ class CloneItemsTool(object):
             direction="Input")
 
         param2 = arcpy.Parameter(
-            displayName="Area of Interest",
-            name="area_of_interest",
-            datatype="GPExtent",
-            parameterType="Optional",
-            direction="Input")
-
-        param3 = arcpy.Parameter(
             displayName="Copy Data",
             name="copy_data",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
-        param3.value = False
+        param2.value = False
 
-        param4 = arcpy.Parameter(
+        param3 = arcpy.Parameter(
             displayName="Validation JSON",
             name="validation_json",
             datatype="GPString",
             parameterType="Derived",
             direction="Output")
 
-        params = [param0, param1, param2, param3, param4]
+        params = [param0, param1, param2, param3]
         return params
 
     def isLicensed(self):
@@ -265,15 +258,15 @@ class CloneItemsTool(object):
         validation is performed.  This method is called whenever a parameter
         has been changed."""
         if not parameters[0].hasBeenValidated:
-            if not parameters[4].value:
+            if not parameters[3].value:
                 target = gis.GIS('pro')
                 folders = target.users.me.folders
                 parameters[1].filter.list = sorted([folder['title'] for folder in folders])
                 validation_json =  { 'folders' : folders }
-                parameters[4].value = json.dumps(validation_json)
+                parameters[3].value = json.dumps(validation_json)
 
         if not parameters[1].hasBeenValidated:
-            validation_json = json.loads(parameters[4].valueAsText)  
+            validation_json = json.loads(parameters[3].valueAsText)  
             folders = validation_json['folders']
             if parameters[1].value:
                 parameters[1].filter.list = sorted(set([parameters[1].valueAsText] + [folder['title'] for folder in folders]))
@@ -306,9 +299,8 @@ class CloneItemsTool(object):
             if item_id not in item_ids:
                 item_ids.append(item_id)   
         output_folder = parameters[1].valueAsText
-        extent = parameters[2].value
-        copy_data = parameters[3].value
-        parameters[4].value = ''
+        copy_data = parameters[2].value
+        parameters[3].value = ''
 
         for item_id in item_ids:
             try:
@@ -322,7 +314,7 @@ class CloneItemsTool(object):
             _add_message(deploy_message)
             arcpy.SetProgressor('default', deploy_message)                           
 
-            clone_item(target, item, output_folder, extent, copy_data)
+            clone_item(target, item, output_folder, copy_data, arcpy.env.extent, arcpy.env.outputCoordinateSystem )
 
 class DeploySolutionsLocalTool(object):
     def __init__(self):
@@ -1252,7 +1244,7 @@ class ItemDefinition(object):
             # Get the item properties from the original item to be applied when the new item is created
             item_properties = self._get_item_properties()
             if extent:
-                item_properties['extent'] = extent['wgs84']
+                item_properties['extent'] = extent['itemExtent']
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 data = self.data
@@ -1451,7 +1443,7 @@ class TextItemDefinition(ItemDefinition):
             # Get the item properties from the original item to be applied when the new item is created
             item_properties = self._get_item_properties()
             if extent:
-                item_properties['extent'] = extent['wgs84']
+                item_properties['extent'] = extent['itemExtent']
             data = self.data
             if data:
                 item_properties['text'] = json.dumps(data)
@@ -1621,8 +1613,8 @@ class FeatureServiceDefinition(TextItemDefinition):
             for key in ['layers', 'tables', 'fullExtent']:
                 if key in service_definition:
                     del service_definition[key]
-            service_definition['initialExtent'] = extent['web_mercator']
-            service_definition['spatialReference'] = extent['web_mercator']['spatialReference']
+            service_definition['initialExtent'] = extent['serviceExtent']
+            service_definition['spatialReference'] = extent['serviceExtent']['spatialReference']
 
             # Create a new feature service
             new_item = target.content.create_service(name, service_type='featureService', create_params=service_definition, folder=folder['title'])
@@ -1650,7 +1642,7 @@ class FeatureServiceDefinition(TextItemDefinition):
                 
                 # Set the extent of the feature layer to the specified default extent in web mercator
                 if layer['type'] == 'Feature Layer':
-                    layer['extent'] = extent['web_mercator']
+                    layer['extent'] = extent['serviceExtent']
         
             # Add the layer and table definitions to the service
             # Explicitly add layers first and then tables, otherwise sometimes json.dumps() reverses them and this effects the output service
@@ -1710,7 +1702,7 @@ class FeatureServiceDefinition(TextItemDefinition):
 
             # Get the item properties from the original item
             item_properties = self._get_item_properties()
-            item_properties['extent'] = extent['wgs84']
+            item_properties['extent'] = extent['itemExtent']
             data = self.data
 
             # Get the collection of layers and tables from the item data
@@ -1810,7 +1802,7 @@ class WebMapDefinition(TextItemDefinition):
         
             # Get the item properties from the original web map which will be applied when the new item is created
             item_properties = self._get_item_properties()
-            item_properties['extent'] = extent['wgs84']
+            item_properties['extent'] = extent['itemExtent']
 
             # Swizzle the item ids and URLs of the feature layers and tables in the web map
             webmap_json = self.data
@@ -1987,7 +1979,7 @@ def download_items(item_definitions, output_directory):
       
     return True 
 
-def clone_item(target, item, folder_name, extent=None, copy_data=False):
+def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_reference=None):
     """Clone an item to a portal. If a web map or application is passed in, all services and groups that support the application will also be cloned.
     Keyword arguments:
     target - The instance of arcgis.gis.GIS (the portal) to clone the items to.
@@ -2017,12 +2009,13 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
         else:
             folder = target.content.create_folder(folder_name)
 
+        # Get the extent definition
+        default_extent = _get_extent_definition(target, extent, spatial_reference)
+        services_sr_code = default_extent['serviceExtent']['spatialReference']
+
         # Get the definitions associated with the item
         item_definitions = []
-        _get_item_definitions(item, item_definitions, copy_data)
-
-        # Get the extent definition
-        default_extent = _get_extent_definition(target, extent)
+        _get_item_definitions(item, item_definitions, copy_data, services_sr_code)
 
         #If the folder does not already exist create a new folder
         current_user = target.users.me
@@ -2134,7 +2127,7 @@ def clone_item(target, item, folder_name, extent=None, copy_data=False):
 
 #region Private API Functions
 
-def _get_item_definitions(item, item_definitions, copy_data=False):
+def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None):
     """" Get a list of definitions for the specified item. 
     This method differs from get_item_defintion in that it is run recursively to return the definitions of feature service items that make up a webmap and the groups and webmaps that make up an application.
     These definitions can be used to clone or download the items.
@@ -2159,7 +2152,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False):
         search_query = 'group:{0} AND type:{1}'.format(item['id'], 'Web Map')
         group_items = source.content.search(search_query, max_items=100, outside_org=True)
         for webmap in group_items:
-            webmap_definition = _get_item_definitions(webmap, item_definitions, copy_data)
+            webmap_definition = _get_item_definitions(webmap, item_definitions, copy_data, sr_code)
             webmap_definition.sharing['groups'] = [item['id']]
 
     # If the item is an application or dashboard find the web map or group that the application referencing
@@ -2190,7 +2183,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False):
                     except RuntimeError:
                         _add_message("Failed to get group {0}".format(group_id, 'Error'))
                         raise
-                    _get_item_definitions(group, item_definitions, copy_data)
+                    _get_item_definitions(group, item_definitions, copy_data, sr_code)
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
@@ -2201,7 +2194,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False):
             except RuntimeError:
                 _add_message("Failed to get web map {0}".format(webmap_id, 'Error'))
                 raise
-            _get_item_definitions(webmap, item_definitions, copy_data)
+            _get_item_definitions(webmap, item_definitions, copy_data, sr_code)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
     elif item['type'] == 'Web Map':
@@ -2235,11 +2228,11 @@ def _get_item_definitions(item, item_definitions, copy_data=False):
                 except RuntimeError:
                     _add_message("Failed to get service item {0}".format(item_id, 'Error'))
                     raise
-                _get_item_definitions(feature_service, item_definitions, copy_data)
+                _get_item_definitions(feature_service, item_definitions, copy_data, sr_code)
 
     # All other types we no longer need to recursively look for related items
     else:
-        item_definition = _get_item_defintion(item, copy_data)
+        item_definition = _get_item_defintion(item, copy_data, sr_code)
         item_definitions.append(item_definition)
 
     return item_definition
@@ -2363,7 +2356,7 @@ def _get_group_definition(group):
     group - The arcgis.GIS.Group to get the definition for.""" 
     return GroupDefinition(dict(group), thumbnail=None, portal_group=group)
 
-def _get_item_defintion(item, copy_data=False):
+def _get_item_defintion(item, copy_data=False, sr_code=None):
     """Get an instance of the corresponding definition class for the specified item. This definition can be used to clone or download the item.
     Keyword arguments:
     item - The arcgis.GIS.Item to get the definition for.
@@ -2399,7 +2392,7 @@ def _get_item_defintion(item, copy_data=False):
         if copy_data:
             features = {}
             for layer in svc.layers + svc.tables:
-                features[str(layer.properties['id'])] = _get_features(layer)
+                features[str(layer.properties['id'])] = _get_features(layer, sr_code)
 
         return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=features, data=data, thumbnail=None, portal_item=item)
 
@@ -2419,10 +2412,13 @@ def _add_message(message, type='Info'):
     elif type == 'Error':
         arcpy.AddError(message)
 
-def _get_features(feature_layer):
+def _get_features(feature_layer, sr_code=None):
     """Get the features for the given feature layer of a feature service. Returns a list of json features.
     Keyword arguments:
-    feature_layer - The feature layer to return the features for"""  
+    feature_layer - The feature layer to return the features for"""
+    if sr_code is None:
+        sr_code = 3857
+      
     total_features = []
     record_count = feature_layer.query(returnCountOnly = True)
     max_record_count = feature_layer.properties['maxRecordCount']
@@ -2430,12 +2426,12 @@ def _get_features(feature_layer):
         max_record_count = 1000
     offset = 0
     while offset < record_count:
-        features = feature_layer.query(as_dict=True, outSR=102100, resultOffset=offset, resultRecordCount=max_record_count)['features']
+        features = feature_layer.query(as_dict=True, outSR=sr_code, resultOffset=offset, resultRecordCount=max_record_count)['features']
         offset += len(features)
         total_features += features
     return total_features
 
-def _get_extent_definition(target, extent=None):
+def _get_extent_definition(target, extent=None, spatial_reference=None):
     """Get a dictionary representation of an arcpy.Extent object that is used by the clone_items method. 
     This creates a WGS84 and Web Mercator representation of the extent that is used when setting the spatial reference of feature services and the default extent of items. 
     Keyword arguments:
@@ -2460,19 +2456,22 @@ def _get_extent_definition(target, extent=None):
     polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), sr)
     extent = polygon.extent
 
-    # Project the extent to WGS84 which is used by default for the web map and services initial extents
+    # Project the extent to WGS84 which is used by default for the web map and service items initial extents
     extent_wgs84 = extent.projectAs(arcpy.SpatialReference(4326))
-    extent_web_mercator = extent.projectAs(arcpy.SpatialReference(102100))
-    extent_dict = {'wgs84' : '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
-                                                extent_wgs84.XMax, extent_wgs84.YMax),
-                  'web_mercator' : {
-				    "xmin" : extent_web_mercator.XMin,
-				    "ymin" : extent_web_mercator.YMin,
-				    "xmax" : extent_web_mercator.XMax,
-				    "ymax" : extent_web_mercator.YMax,
-				    "spatialReference" : {'latestWkid': 3857, 'wkid': 102100} } }
 
-    return extent_dict
+    # Get the default extent expressed in the spatial reference requested for the services
+    if spatial_reference is None:
+        spatial_reference = arcpy.SpatialReference(3857) # Web Mercator
+    extent_service = extent.projectAs(spatial_reference)
+    
+    return {'itemExtent' : '{0},{1},{2},{3}'.format(extent_wgs84.XMin, extent_wgs84.YMin, 
+                                                extent_wgs84.XMax, extent_wgs84.YMax),
+            'serviceExtent' : {
+			    "xmin" : extent_service.XMin,
+			    "ymin" : extent_service.YMin,
+			    "xmax" : extent_service.XMax,
+			    "ymax" : extent_service.YMax,
+			    "spatialReference" : {'wkid': spatial_reference.factoryCode} } }
 
 def _get_existing_item(item, folder_items):
     """Test if an item with a given source tag already exists in the collection of items within a given folder. 

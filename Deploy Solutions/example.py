@@ -27,13 +27,18 @@ if __name__ == "__main__":
         # Specify the name of the folder to clone the items to. If it doesn't already exist it will be created.
         folder_name = "Test"
 
+        # Optionally specify whether the data from the original feature service should be copied to the cloned service.
+        copy_data = True
+
         # Optionally provide an arcpy.Extent to set the output extent of the cloned items.
+        # If not provided it will default to the extent defined in the target organization.
         extent = None
 
-        # Optionally specify whether the data from the original feature service should be copied to the cloned service.
-        copy_data = False
+        # Optionally provide an arcpy.SpatialReference to set the output spatial reference of any cloned feature services. 
+        # If not provided it will default to Web Mercator Auxiliary Sphere.
+        spatial_reference = None
 
-        deploy_solutions.clone_item(target, item, folder_name, extent, copy_data)
+        deploy_solutions.clone_item(target, item, folder_name, copy_data, extent, spatial_reference)
 
 
 
