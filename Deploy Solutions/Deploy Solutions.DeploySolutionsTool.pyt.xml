@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<metadata xml:lang="en">
+	<Esri>
+		<CreaDate>20160822</CreaDate>
+		<CreaTime>15075900</CreaTime>
+		<ArcGISFormat>1.0</ArcGISFormat>
+		<SyncOnce>TRUE</SyncOnce>
+		<ModDate>20160830</ModDate>
+		<ModTime>10272100</ModTime>
+		<scaleRange>
+			<minScale>150000000</minScale>
+			<maxScale>5000</maxScale>
+		</scaleRange>
+	</Esri>
+	<tool name="DeploySolutionsTool" displayname="Deploy Solutions" toolboxalias="solutions" xmlns="">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<parameters>
+			<param name="industry" displayname="Industry" type="Required" direction="Input" datatype="String" expression="industry"/>
+			<param name="initiative" displayname="Initiative" type="Required" direction="Input" datatype="String" expression="initiative"/>
+			<param name="solution" displayname="Solution" type="Required" direction="Input" datatype="Multiple Value" expression="solution;solution..."/>
+			<param name="folder" displayname="Folder" type="Required" direction="Input" datatype="String" expression="folder"/>
+			<param name="copy_sample_data" displayname="Copy Sample Data" type="Optional" direction="Input" datatype="Boolean" expression="{copy_sample_data}"/>
+		</parameters>
+		<environments>
+			<environment name="outputCoordinateSystem" label="Output coordinate system"/>
+			<environment name="extent" label="Extent"/>
+		</environments>
+	</tool>
+	<dataIdInfo>
+		<idCitation>
+			<resTitle>Deploy Solutions</resTitle>
+		</idCitation>
+		<searchKeys>
+			<keyword>deploy</keyword>
+		</searchKeys>
+	</dataIdInfo>
+	<distInfo>
+		<distributor>
+			<distorFormat>
+				<formatName>ArcToolbox Tool</formatName>
+			</distorFormat>
+		</distributor>
+	</distInfo>
+	<mdHrLv>
+		<ScopeCd value="005"/>
+	</mdHrLv>
+	<mdDateSt Sync="TRUE">20160830</mdDateSt>
+</metadata>
