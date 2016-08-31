@@ -170,6 +170,7 @@ class DeploySolutionsTool(object):
             return             
         
         source = gis.GIS()
+        arcpy.env.autoCancelling = False
 
         # Get the input parameters
         industry = parameters[0].valueAsText
@@ -207,6 +208,8 @@ class DeploySolutionsTool(object):
                 continue
 
             clone_item(target, solution_item, output_folder, copy_data, arcpy.env.extent, arcpy.env.outputCoordinateSystem )
+            if arcpy.env.isCancelled:
+                return
 
 class CloneItemsTool(object):
     def __init__(self):
@@ -1983,6 +1986,10 @@ class ItemCreateException(Exception):
     """
     pass
 
+class CustomCancelException(Exception):
+    """Custom exception for geoprocessing tool cancellations"""
+    pass
+
 #endregion
 
 #region Public API Functions
@@ -2046,6 +2053,10 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
         # Get the extent definition
         default_extent = _get_extent_definition(target, extent, spatial_reference)
 
+        # Check if the tool has been cancelled before fetching item definitions
+        if arcpy.env.isCancelled:
+            raise CustomCancelException() 
+
         # Get the definitions associated with the item
         item_definitions = []
         _get_item_definitions(item, item_definitions)
@@ -2067,6 +2078,8 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
         # Clone the groups
         for group in [g for g in item_definitions if isinstance(g, GroupDefinition)]:
+            if arcpy.env.isCancelled:
+                raise CustomCancelException()
             item_definitions.remove(group)
             original_group = group.info
                 
@@ -2081,6 +2094,8 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
         # Clone the feature services
         for feature_service in [i for i in item_definitions if isinstance(i, FeatureServiceDefinition)]:
+            if arcpy.env.isCancelled:
+                raise CustomCancelException() 
             item_definitions.remove(feature_service)
             original_item = feature_service.info
 
@@ -2105,6 +2120,8 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
         # Clone the web maps
         for webmap in [i for i in item_definitions if isinstance(i, WebMapDefinition)]:
+            if arcpy.env.isCancelled:
+                raise CustomCancelException() 
             item_definitions.remove(webmap)
             original_item = webmap.info
 
@@ -2123,6 +2140,8 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
         # Clone the applications
         for application in [i for i in item_definitions if isinstance(i, ApplicationDefinition)]:
+            if arcpy.env.isCancelled:
+                raise CustomCancelException()
             item_definitions.remove(application)
             original_item = application.info
 
@@ -2136,6 +2155,8 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             
         # Clone all other items
         for item_definition in item_definitions:
+            if arcpy.env.isCancelled:
+                raise CustomCancelException() 
             original_item = item_definition.info
 
             new_item = _get_existing_item(original_item, folder_items)
@@ -2154,12 +2175,14 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             _add_message(e.args[0], 'Error')
             if e.args[1] is not None:
                 created_items.append(e.args[1])
+        elif type(e) == CustomCancelException:
+            _add_message("{0} deployment canceled".format(item['title']), 'Error')
         else:
             _add_message(str(e), 'Error')
 
         for solution_item in created_items:
             if solution_item.delete():
-                _add_message("Deleted {0}".format(solution_item['title']))
+                _add_message("Deleted {0} {1}".format(solution_item['type'], solution_item['title']))
                 
         _add_message('Failed to add {0}'.format(item['title']), 'Error')
         _add_message('------------------------')
