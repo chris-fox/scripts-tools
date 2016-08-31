@@ -2013,21 +2013,29 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
         # Get the extent definition
         default_extent = _get_extent_definition(target, extent, spatial_reference)
-        services_sr_code = default_extent['serviceExtent']['spatialReference']
+        wkid = default_extent['serviceExtent']['spatialReference']
 
         # Get the definitions associated with the item
         item_definitions = []
-        _get_item_definitions(item, item_definitions, copy_data, services_sr_code)
+        _get_item_definitions(item, item_definitions, copy_data, wkid)
 
-        #If the folder does not already exist create a new folder
-        current_user = target.users.me
-        folders = current_user.folders
-        folder = next((folder for folder in folders if folder['title'] == folder_name), None)
-        if not folder:
-            folder = target.content.create_folder(folder_name)
+        # Test if the user has the correct privileges to create the items requested
+        privileges = target.properties.user.privileges;
+        for item_definition in item_definitions:
+            if isinstance(item_definition, ItemDefinition):
+                if 'portal:user:createItem' not in privileges:
+                    raise Exception("User does not have permissions to create new items in the target organization")
+
+            if isinstance(item_definition, GroupDefinition):
+                if 'portal:user:createGroup' not in privileges:
+                    raise Exception("User does not have permissions to create new groups in the target organization")
+
+            if isinstance(item_definition, FeatureServiceDefinition):
+                if 'portal:publisher:publishFeatures' not in privileges:
+                    raise Exception("User does not have permissions to publish hosted feature services in the target organization")
 
         # Clone the groups
-        for group in [group for group in item_definitions if isinstance(group, GroupDefinition)]:
+        for group in [g for g in item_definitions if isinstance(g, GroupDefinition)]:
             item_definitions.remove(group)
             original_group = group.info
                 
@@ -2041,7 +2049,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             group_mapping[original_group['id']] = new_group['id']
 
         # Clone the feature services
-        for feature_service in [item for item in item_definitions if isinstance(item, FeatureServiceDefinition)]:
+        for feature_service in [i for i in item_definitions if isinstance(i, FeatureServiceDefinition)]:
             item_definitions.remove(feature_service)
             original_item = feature_service.info
 
@@ -2065,7 +2073,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             service_mapping[original_item['url']] = { 'id' : new_item['id'], 'url' : new_item['url'], 'layer_field_mapping' : layer_field_mapping }
 
         # Clone the web maps
-        for webmap in [item for item in item_definitions if isinstance(item, WebMapDefinition)]:
+        for webmap in [i for i in item_definitions if isinstance(i, WebMapDefinition)]:
             item_definitions.remove(webmap)
             original_item = webmap.info
 
@@ -2083,7 +2091,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             webmap_mapping[original_item['id']] =  new_item['id']
 
         # Clone the applications
-        for application in [item for item in item_definitions if isinstance(item, ApplicationDefinition)]:
+        for application in [i for i in item_definitions if isinstance(i, ApplicationDefinition)]:
             item_definitions.remove(application)
             original_item = application.info
 
@@ -2096,12 +2104,12 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
                 _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title'])) 
             
         # Clone all other items
-        for item in item_definitions:
-            original_item = item.info
+        for item_definition in item_definitions:
+            original_item = item_definition.info
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                   
-                new_item = item.clone(target, folder, default_extent, group_mapping)
+                new_item = item_definition.clone(target, folder, default_extent, group_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2129,7 +2137,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
 #region Private API Functions
 
-def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None):
+def _get_item_definitions(item, item_definitions, copy_data=False, wkid=None):
     """" Get a list of definitions for the specified item. 
     This method differs from get_item_defintion in that it is run recursively to return the definitions of feature service items that make up a webmap and the groups and webmaps that make up an application.
     These definitions can be used to clone or download the items.
@@ -2137,7 +2145,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None)
     item - The arcgis.GIS.Item to get the definition for
     item_definitions - A list of item and group definitions. When first called this should be an empty list that you hold a reference to and all definitions related to the item will be appended to the list.
     copy_data- A flag indicating if the data from the original feature services should be added to the definition to be cloned or downloaded
-    sr_code -  The code for the spatial reference to return the features in"""  
+    wkid -  The wkid for the spatial reference to return the features in"""  
 
     item_definition = None
     source = item._gis
@@ -2155,7 +2163,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None)
         search_query = 'group:{0} AND type:{1}'.format(item['id'], 'Web Map')
         group_items = source.content.search(search_query, max_items=100, outside_org=True)
         for webmap in group_items:
-            webmap_definition = _get_item_definitions(webmap, item_definitions, copy_data, sr_code)
+            webmap_definition = _get_item_definitions(webmap, item_definitions, copy_data, wkid)
             webmap_definition.sharing['groups'] = [item['id']]
 
     # If the item is an application or dashboard find the web map or group that the application referencing
@@ -2186,7 +2194,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None)
                     except RuntimeError:
                         _add_message("Failed to get group {0}".format(group_id, 'Error'))
                         raise
-                    _get_item_definitions(group, item_definitions, copy_data, sr_code)
+                    _get_item_definitions(group, item_definitions, copy_data, wkid)
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
@@ -2197,7 +2205,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None)
             except RuntimeError:
                 _add_message("Failed to get web map {0}".format(webmap_id, 'Error'))
                 raise
-            _get_item_definitions(webmap, item_definitions, copy_data, sr_code)
+            _get_item_definitions(webmap, item_definitions, copy_data, wkid)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
     elif item['type'] == 'Web Map':
@@ -2231,11 +2239,11 @@ def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None)
                 except RuntimeError:
                     _add_message("Failed to get service item {0}".format(item_id, 'Error'))
                     raise
-                _get_item_definitions(feature_service, item_definitions, copy_data, sr_code)
+                _get_item_definitions(feature_service, item_definitions, copy_data, wkid)
 
     # All other types we no longer need to recursively look for related items
     else:
-        item_definition = _get_item_defintion(item, copy_data, sr_code)
+        item_definition = _get_item_defintion(item, copy_data, wkid)
         item_definitions.append(item_definition)
 
     return item_definition
@@ -2359,12 +2367,12 @@ def _get_group_definition(group):
     group - The arcgis.GIS.Group to get the definition for.""" 
     return GroupDefinition(dict(group), thumbnail=None, portal_group=group)
 
-def _get_item_defintion(item, copy_data=False, sr_code=None):
+def _get_item_defintion(item, copy_data=False, wkid=None):
     """Get an instance of the corresponding definition class for the specified item. This definition can be used to clone or download the item.
     Keyword arguments:
     item - The arcgis.GIS.Item to get the definition for.
     copy_data - A flag indicating if in the case of a feature service if the data from the original feature should be added to the definition to be cloned or downloaded.
-    sr_code -  The code for the spatial reference to return the features in"""  
+    wkid -  The wkid for the spatial reference to return the features in"""  
        
     # If the item is an application or dashboard get the ApplicationDefinition
     if item['type'] in ['Web Mapping Application','Operation View']:
@@ -2396,7 +2404,7 @@ def _get_item_defintion(item, copy_data=False, sr_code=None):
         if copy_data:
             features = {}
             for layer in svc.layers + svc.tables:
-                features[str(layer.properties['id'])] = _get_features(layer, sr_code)
+                features[str(layer.properties['id'])] = _get_features(layer, wkid)
 
         return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=features, data=data, thumbnail=None, portal_item=item)
 
@@ -2416,13 +2424,13 @@ def _add_message(message, type='Info'):
     elif type == 'Error':
         arcpy.AddError(message)
 
-def _get_features(feature_layer, sr_code=None):
+def _get_features(feature_layer, wkid=None):
     """Get the features for the given feature layer of a feature service. Returns a list of json features.
     Keyword arguments:
     feature_layer - The feature layer to return the features for
-    sr_code -  The code for the spatial reference to return the features in"""
-    if sr_code is None:
-        sr_code = 3857
+    wkid -  The wkid for the spatial reference to return the features in"""
+    if wkid is None:
+        wkid = 3857
       
     total_features = []
     record_count = feature_layer.query(returnCountOnly = True)
@@ -2431,7 +2439,7 @@ def _get_features(feature_layer, sr_code=None):
         max_record_count = 1000
     offset = 0
     while offset < record_count:
-        features = feature_layer.query(as_dict=True, outSR=sr_code, resultOffset=offset, resultRecordCount=max_record_count)['features']
+        features = feature_layer.query(as_dict=True, outSR=wkid, resultOffset=offset, resultRecordCount=max_record_count)['features']
         offset += len(features)
         total_features += features
     return total_features
