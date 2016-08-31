@@ -1499,92 +1499,123 @@ class FeatureServiceDefinition(TextItemDefinition):
     def features(self):
         return copy.deepcopy(self._features)
 
-    def _add_features(self, target, layers, relationships, layer_field_mapping):
+    def _get_features(self, feature_layer, wkid=None):
+        """Get the features for the given feature layer of a feature service. Returns a list of json features.
+        Keyword arguments:
+        feature_layer - The feature layer to return the features for
+        wkid -  The wkid for the spatial reference to return the features in"""
+        if wkid is None:
+            wkid = 3857
+      
+        total_features = []
+        record_count = feature_layer.query(returnCountOnly = True)
+        max_record_count = feature_layer.properties['maxRecordCount']
+        if max_record_count < 1:
+            max_record_count = 1000
+        offset = 0
+        while offset < record_count:
+            features = feature_layer.query(as_dict=True, outSR=wkid, resultOffset=offset, resultRecordCount=max_record_count)['features']
+            offset += len(features)
+            total_features += features
+        return total_features
+
+    def _add_features(self, target, layers, relationships, layer_field_mapping, wkid):
         """Add the features from the definition to the layers returned from the cloned item.
         Keyword arguments:
         layers - Dictionary containing the id of the layer and its corresponding arcgis.lyr.FeatureLayer
-        relationships - Dictionary containing the id of the layer and it's relationship definitions"""
+        relationships - Dictionary containing the id of the layer and it's relationship definitions
+        layer_field_mapping - field mapping if the case or name of field changed from the original service
+        wkid -  The wkid for the spatial reference to create the features in"""
 
-        features = self.features   
-        if features:
-            for id in features:
-                if int(id) in layer_field_mapping:
-                    field_mapping = layer_field_mapping[int(id)]
-                    for feature in features[id]:
-                        self._update_feature_attributes(feature, field_mapping)
+        # Get the features if they haven't already been queried
+        features = self.features
+        if not features and self.portal_item:
+            svc = lyr.FeatureService.fromitem(self.portal_item)    
+            features = {}
+            for layer in svc.layers + svc.tables:
+                features[str(layer.properties['id'])] = self._get_features(layer, wkid)
+        else:
+            return   
 
-            # Add in chunks of 2000 features
-            chunk_size = 2000
-            layer_ids = [id for id in layers]
+        # Update the feature attributes if field names have changed
+        for id in features:
+            if int(id) in layer_field_mapping:
+                field_mapping = layer_field_mapping[int(id)]
+                for feature in features[id]:
+                    self._update_feature_attributes(feature, field_mapping)
 
-            # Find all the relates where the layer's role is the origin and the key field is the global id field
-            # We want to process these first, get the new global ids that are created and update in related features before processing the relates
-            for id in relationships:                  
-                if id not in layer_ids or id not in layers:
-                    continue
+        # Add in chunks of 2000 features
+        chunk_size = 2000
+        layer_ids = [id for id in layers]
 
-                properties = layers[id].properties  
-                if 'globalIdField' not in properties:  
-                    continue
+        # Find all the relates where the layer's role is the origin and the key field is the global id field
+        # We want to process these first, get the new global ids that are created and update in related features before processing the relates
+        for id in relationships:                  
+            if id not in layer_ids or id not in layers:
+                continue
 
-                global_id_field = properties['globalIdField']
-                relates = [relate for relate in relationships[id] if relate['role'] == 'esriRelRoleOrigin' and relate['keyField'] == global_id_field]
-                if len(relates) == 0:
-                    continue
+            properties = layers[id].properties  
+            if 'globalIdField' not in properties:  
+                continue
 
-                layer = layers[id]
-                layer_features = features[str(id)]
-                if len(layer_features) == 0:
-                    layer_ids.remove(id)
-                    continue
+            global_id_field = properties['globalIdField']
+            relates = [relate for relate in relationships[id] if relate['role'] == 'esriRelRoleOrigin' and relate['keyField'] == global_id_field]
+            if len(relates) == 0:
+                continue
 
-                # Add the features to the layer in chunks
-                add_results = []
-                for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
-                    edits = layer.edit_features(adds=features_chunk)
-                    add_results += edits['addResults']
+            layer = layers[id]
+            layer_features = features[str(id)]
+            if len(layer_features) == 0:
                 layer_ids.remove(id)
+                continue
 
-                # Create a mapping between the original global id and the new global id
-                global_id_mapping = { layer_features[i]['attributes'][global_id_field] : add_results[i]['globalId'] for i in range(0, len(layer_features)) }
+            # Add the features to the layer in chunks
+            add_results = []
+            for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
+                edits = layer.edit_features(adds=features_chunk)
+                add_results += edits['addResults']
+            layer_ids.remove(id)
 
-                for relate in relates:
-                    related_layer_id = relate['relatedTableId']
-                    if related_layer_id not in layer_ids:
-                        continue
-                    related_layer_features = features[str(related_layer_id)]
-                    if len(related_layer_features) == 0:
-                        layer_ids.remove(related_layer_id)
-                        continue
+            # Create a mapping between the original global id and the new global id
+            global_id_mapping = { layer_features[i]['attributes'][global_id_field] : add_results[i]['globalId'] for i in range(0, len(layer_features)) }
 
-                    # Get the definition of the definition relationship
-                    destination_relate = next((r for r in relationships[related_layer_id] if r['id'] == relate['id'] and r['role'] == 'esriRelRoleDestination'), None)
-                    if not destination_relate:
-                        continue
-
-                    key_field = destination_relate['keyField']
-
-                    # Update the relate features keyfield to the new global id
-                    for feature in related_layer_features:
-                        if key_field in feature['attributes']:
-                            global_id = feature['attributes'][key_field]
-                            if global_id in global_id_mapping:
-                                feature['attributes'][key_field] = global_id_mapping[global_id]
-
-                    # Add the related features to the layer in chunks
-                    for features_chunk in [related_layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
-                        layers[related_layer_id].edit_features(adds=features_chunk)
-                    layer_ids.remove(related_layer_id)
-                      
-            # Add features to all other layers and tables                           
-            for id in layer_ids:
-                layer_features = features[str(id)]
-                if len(layer_features) == 0:
+            for relate in relates:
+                related_layer_id = relate['relatedTableId']
+                if related_layer_id not in layer_ids:
                     continue
-                for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
-                    layers[id].edit_features(adds=features_chunk)
+                related_layer_features = features[str(related_layer_id)]
+                if len(related_layer_features) == 0:
+                    layer_ids.remove(related_layer_id)
+                    continue
 
-    def clone(self, target, folder, extent, group_mapping={}):
+                # Get the definition of the definition relationship
+                destination_relate = next((r for r in relationships[related_layer_id] if r['id'] == relate['id'] and r['role'] == 'esriRelRoleDestination'), None)
+                if not destination_relate:
+                    continue
+
+                key_field = destination_relate['keyField']
+
+                # Update the relate features keyfield to the new global id
+                for feature in related_layer_features:
+                    if key_field in feature['attributes']:
+                        global_id = feature['attributes'][key_field]
+                        if global_id in global_id_mapping:
+                            feature['attributes'][key_field] = global_id_mapping[global_id]
+
+                # Add the related features to the layer in chunks
+                for features_chunk in [related_layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
+                    layers[related_layer_id].edit_features(adds=features_chunk)
+                layer_ids.remove(related_layer_id)
+                      
+        # Add features to all other layers and tables                           
+        for id in layer_ids:
+            layer_features = features[str(id)]
+            if len(layer_features) == 0:
+                continue
+            for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
+                layers[id].edit_features(adds=features_chunk)
+
+    def clone(self, target, folder, extent, group_mapping={}, copy_data=False):
         """Clone the feature service in the target organization.
         Keyword arguments:
         target - The instance of arcgis.gis.GIS (the portal) to clone the feature service to.
@@ -1751,7 +1782,8 @@ class FeatureServiceDefinition(TextItemDefinition):
                 new_item.update(item_properties=item_properties, thumbnail=thumbnail)
     
             # Copy features from original item
-            self._add_features(target, new_layers, relationships, layer_field_mapping)
+            if copy_data:
+                self._add_features(target, new_layers, relationships, layer_field_mapping, extent['serviceExtent']['spatialReference']['wkid'])
 
             # Share the item
             self._share_new_item(new_item, group_mapping)
@@ -2013,11 +2045,10 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
         # Get the extent definition
         default_extent = _get_extent_definition(target, extent, spatial_reference)
-        wkid = default_extent['serviceExtent']['spatialReference']
 
         # Get the definitions associated with the item
         item_definitions = []
-        _get_item_definitions(item, item_definitions, copy_data, wkid)
+        _get_item_definitions(item, item_definitions)
 
         # Test if the user has the correct privileges to create the items requested
         privileges = target.properties.user.privileges;
@@ -2056,7 +2087,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             layer_field_mapping = {}
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                     
-                new_item, layer_field_mapping = feature_service.clone(target, folder, default_extent, group_mapping)
+                new_item, layer_field_mapping = feature_service.clone(target, folder, default_extent, group_mapping, copy_data)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2137,15 +2168,14 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
 #region Private API Functions
 
-def _get_item_definitions(item, item_definitions, copy_data=False, wkid=None):
+def _get_item_definitions(item, item_definitions):
     """" Get a list of definitions for the specified item. 
     This method differs from get_item_defintion in that it is run recursively to return the definitions of feature service items that make up a webmap and the groups and webmaps that make up an application.
     These definitions can be used to clone or download the items.
     Keyword arguments:
     item - The arcgis.GIS.Item to get the definition for
     item_definitions - A list of item and group definitions. When first called this should be an empty list that you hold a reference to and all definitions related to the item will be appended to the list.
-    copy_data- A flag indicating if the data from the original feature services should be added to the definition to be cloned or downloaded
-    wkid -  The wkid for the spatial reference to return the features in"""  
+    """  
 
     item_definition = None
     source = item._gis
@@ -2163,7 +2193,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False, wkid=None):
         search_query = 'group:{0} AND type:{1}'.format(item['id'], 'Web Map')
         group_items = source.content.search(search_query, max_items=100, outside_org=True)
         for webmap in group_items:
-            webmap_definition = _get_item_definitions(webmap, item_definitions, copy_data, wkid)
+            webmap_definition = _get_item_definitions(webmap, item_definitions)
             webmap_definition.sharing['groups'] = [item['id']]
 
     # If the item is an application or dashboard find the web map or group that the application referencing
@@ -2194,7 +2224,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False, wkid=None):
                     except RuntimeError:
                         _add_message("Failed to get group {0}".format(group_id, 'Error'))
                         raise
-                    _get_item_definitions(group, item_definitions, copy_data, wkid)
+                    _get_item_definitions(group, item_definitions)
 
                 if 'webmap' in app_json['values']:
                     webmap_id = app_json['values']['webmap']
@@ -2205,7 +2235,7 @@ def _get_item_definitions(item, item_definitions, copy_data=False, wkid=None):
             except RuntimeError:
                 _add_message("Failed to get web map {0}".format(webmap_id, 'Error'))
                 raise
-            _get_item_definitions(webmap, item_definitions, copy_data, wkid)
+            _get_item_definitions(webmap, item_definitions)
 
     # If the item is a web map find all the feature service layers and tables that make up the map
     elif item['type'] == 'Web Map':
@@ -2239,11 +2269,11 @@ def _get_item_definitions(item, item_definitions, copy_data=False, wkid=None):
                 except RuntimeError:
                     _add_message("Failed to get service item {0}".format(item_id, 'Error'))
                     raise
-                _get_item_definitions(feature_service, item_definitions, copy_data, wkid)
+                _get_item_definitions(feature_service, item_definitions)
 
     # All other types we no longer need to recursively look for related items
     else:
-        item_definition = _get_item_defintion(item, copy_data, wkid)
+        item_definition = _get_item_defintion(item)
         item_definitions.append(item_definition)
 
     return item_definition
@@ -2367,12 +2397,11 @@ def _get_group_definition(group):
     group - The arcgis.GIS.Group to get the definition for.""" 
     return GroupDefinition(dict(group), thumbnail=None, portal_group=group)
 
-def _get_item_defintion(item, copy_data=False, wkid=None):
+def _get_item_defintion(item):
     """Get an instance of the corresponding definition class for the specified item. This definition can be used to clone or download the item.
     Keyword arguments:
     item - The arcgis.GIS.Item to get the definition for.
-    copy_data - A flag indicating if in the case of a feature service if the data from the original feature should be added to the definition to be cloned or downloaded.
-    wkid -  The wkid for the spatial reference to return the features in"""  
+    """  
        
     # If the item is an application or dashboard get the ApplicationDefinition
     if item['type'] in ['Web Mapping Application','Operation View']:
@@ -2397,16 +2426,9 @@ def _get_item_defintion(item, copy_data=False, wkid=None):
             layers_definition['tables'].append(dict(table.properties))
         
         # Get the item data, for example any popup definition associated with the item
-        data = item.get_data()     
-        
-        # Get the features for the layers and tables if requested
-        features = None
-        if copy_data:
-            features = {}
-            for layer in svc.layers + svc.tables:
-                features[str(layer.properties['id'])] = _get_features(layer, wkid)
+        data = item.get_data()
 
-        return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=features, data=data, thumbnail=None, portal_item=item)
+        return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=None, data=data, thumbnail=None, portal_item=item)
 
     # For all other types get the corresponding definition
     else:
@@ -2423,26 +2445,6 @@ def _add_message(message, type='Info'):
         arcpy.AddWarning(message)
     elif type == 'Error':
         arcpy.AddError(message)
-
-def _get_features(feature_layer, wkid=None):
-    """Get the features for the given feature layer of a feature service. Returns a list of json features.
-    Keyword arguments:
-    feature_layer - The feature layer to return the features for
-    wkid -  The wkid for the spatial reference to return the features in"""
-    if wkid is None:
-        wkid = 3857
-      
-    total_features = []
-    record_count = feature_layer.query(returnCountOnly = True)
-    max_record_count = feature_layer.properties['maxRecordCount']
-    if max_record_count < 1:
-        max_record_count = 1000
-    offset = 0
-    while offset < record_count:
-        features = feature_layer.query(as_dict=True, outSR=wkid, resultOffset=offset, resultRecordCount=max_record_count)['features']
-        offset += len(features)
-        total_features += features
-    return total_features
 
 def _get_extent_definition(target, extent=None, spatial_reference=None):
     """Get a dictionary representation of an arcpy.Extent object that is used by the clone_items method. 
