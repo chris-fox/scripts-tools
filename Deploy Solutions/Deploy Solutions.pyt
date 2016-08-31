@@ -1985,8 +1985,10 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
     target - The instance of arcgis.gis.GIS (the portal) to clone the items to.
     item - The arcgis.GIS.Item to clone.
     folder_name - The name of the folder to clone the new items to. If the folder does not already exist it will be created.
+    copy_data- A flag indicating if the data from the original feature services should be copied to the cloned service
     extent - An arcpy.Extent used to specify the default extent of the new cloned items. If None the default extent defined in the target portal will be used.
-    copy_data- A flag indicating if the data from the original feature services should be copied to the cloned service"""  
+    spatial_reference - An arcpy.SpatialReference used to specify the output coordinate system of any cloned feature services.
+    """  
 
     group_mapping = {}   
     service_mapping = {}
@@ -2134,7 +2136,8 @@ def _get_item_definitions(item, item_definitions, copy_data=False, sr_code=None)
     Keyword arguments:
     item - The arcgis.GIS.Item to get the definition for
     item_definitions - A list of item and group definitions. When first called this should be an empty list that you hold a reference to and all definitions related to the item will be appended to the list.
-    copy_data- A flag indicating if the data from the original feature services should be added to the definition to be cloned or downloaded"""  
+    copy_data- A flag indicating if the data from the original feature services should be added to the definition to be cloned or downloaded
+    sr_code -  The code for the spatial reference to return the features in"""  
 
     item_definition = None
     source = item._gis
@@ -2360,7 +2363,8 @@ def _get_item_defintion(item, copy_data=False, sr_code=None):
     """Get an instance of the corresponding definition class for the specified item. This definition can be used to clone or download the item.
     Keyword arguments:
     item - The arcgis.GIS.Item to get the definition for.
-    copy_data - A flag indicating if in the case of a feature service if the data from the original feature should be added to the definition to be cloned or downloaded."""  
+    copy_data - A flag indicating if in the case of a feature service if the data from the original feature should be added to the definition to be cloned or downloaded.
+    sr_code -  The code for the spatial reference to return the features in"""  
        
     # If the item is an application or dashboard get the ApplicationDefinition
     if item['type'] in ['Web Mapping Application','Operation View']:
@@ -2415,7 +2419,8 @@ def _add_message(message, type='Info'):
 def _get_features(feature_layer, sr_code=None):
     """Get the features for the given feature layer of a feature service. Returns a list of json features.
     Keyword arguments:
-    feature_layer - The feature layer to return the features for"""
+    feature_layer - The feature layer to return the features for
+    sr_code -  The code for the spatial reference to return the features in"""
     if sr_code is None:
         sr_code = 3857
       
@@ -2436,7 +2441,8 @@ def _get_extent_definition(target, extent=None, spatial_reference=None):
     This creates a WGS84 and Web Mercator representation of the extent that is used when setting the spatial reference of feature services and the default extent of items. 
     Keyword arguments:
     target - The portal that items will be cloned to.
-    extent - Optionally provide an arcpy.Extent to be used. If no extent is provided it will return the default extent defined in the target portal."""   
+    extent - Optionally provide an arcpy.Extent to be used. If no extent is provided it will return the default extent defined in the target portal.
+    spatial_reference - An arcpy.SpatialReference used to specify the output coordinate system of any cloned feature services."""   
     
     coordinates = []
     sr = None
