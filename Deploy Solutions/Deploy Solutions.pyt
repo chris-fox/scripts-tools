@@ -2037,10 +2037,11 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
     try:
         # Check if the item has already been cloned into the target portal  
         folder_items = []
-        folders = target.users.me.folders
+        user = target.users.me
+        folders = user.folders
         folder = next((folder for folder in folders if folder['title'] == folder_name), None)
         if folder:
-            folder_items = target.users.me.items(folder_name)
+            folder_items = user.items(folder_name)
             existing_item = _get_existing_item(item, folder_items)
             if existing_item:
                 _add_message("{0} already exists in {1} folder".format(item['title'], folder_name))
@@ -2062,7 +2063,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
         _get_item_definitions(item, item_definitions)
 
         # Test if the user has the correct privileges to create the items requested
-        privileges = target.properties.user.privileges;
+        privileges = user.privileges;
         for item_definition in item_definitions:
             if isinstance(item_definition, ItemDefinition):
                 if 'portal:user:createItem' not in privileges:
