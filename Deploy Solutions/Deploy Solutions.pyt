@@ -1641,7 +1641,9 @@ class FeatureServiceDefinition(TextItemDefinition):
                 name = name[:len(name) - 33]
 
             if not target.content.is_service_name_available(name, 'featureService'):
-                name = "{0}_{1}".format(name, str(uuid.uuid4()).replace('-',''))       
+                name = "{0}_{1}".format(name, str(uuid.uuid4()).replace('-',''))
+            if name[0].isdigit():
+                name = '_' + name                  
             service_definition['name'] = name
     
             for key in ['layers', 'tables', 'fullExtent']:
