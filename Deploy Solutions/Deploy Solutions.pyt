@@ -317,7 +317,9 @@ class CloneItemsTool(object):
             _add_message(deploy_message)
             arcpy.SetProgressor('default', deploy_message)                           
 
-            clone_item(target, item, output_folder, copy_data, arcpy.env.extent, arcpy.env.outputCoordinateSystem )
+            clone_item(target, item, output_folder, copy_data, arcpy.env.extent, arcpy.env.outputCoordinateSystem)
+            if arcpy.env.isCancelled:
+                return
 
 class DeploySolutionsLocalTool(object):
     def __init__(self):
