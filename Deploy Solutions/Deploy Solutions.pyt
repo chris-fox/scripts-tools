@@ -2089,6 +2089,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             existing_item = _get_existing_item(item, folder_items)
             if existing_item:
                 _add_message("{0} already exists in {1} folder".format(item['title'], folder_name))
+                _add_message("New item id: {0}".format(existing_item['id']))
                 _add_message('------------------------')
                 return
         #If the folder does not already exist create a new folder
@@ -2224,7 +2225,12 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             else:
                 _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))            
 
+        folder_items = user.items(folder_name)
+        existing_item = _get_existing_item(item, folder_items)
+        
         _add_message('Successfully added {0}'.format(item['title']))
+        if existing_item:
+            _add_message("New item id: {0}".format(existing_item['id']))
         _add_message('------------------------')
 
     except Exception as e:
