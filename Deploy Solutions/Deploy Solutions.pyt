@@ -1234,12 +1234,12 @@ class ItemDefinition(object):
                     groups.append(group_mapping[group])
             new_item.share(everyone, org, ','.join(groups))
 
-    def clone(self, target, folder, extent=None, group_mapping={}):  
+    def clone(self, target, folder, extent, item_mapping):  
         """Clone the item in the target organization.
         Keyword arguments:
         target - The instance of arcgis.gis.GIS (the portal) to clone the item to.
         folder - The folder to create the item in
-        group_mapping - Dictionary containing the id of the original group and the id of the new group
+        item_mapping - Dictionary containing mapping between new and old items.
         """
     
         try:
@@ -1273,7 +1273,7 @@ class ItemDefinition(object):
                 new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
-            self._share_new_item(new_item, group_mapping)
+            self._share_new_item(new_item, item_mapping['group'])
 
             return new_item
         except Exception as e:
@@ -1433,12 +1433,12 @@ class TextItemDefinition(ItemDefinition):
             if 'parameterizedExpression' in layer['definitionEditor'] and layer['definitionEditor']['parameterizedExpression'] is not None:
                 layer['definitionEditor']['parameterizedExpression'] = self._find_and_replace_fields(layer['definitionEditor']['parameterizedExpression'], field_mapping)
 
-    def clone(self, target, folder, extent=None, group_mapping={}):  
+    def clone(self, target, folder, extent, item_mapping):  
         """Clone the item in the target organization.
         Keyword arguments:
         target - The instance of arcgis.gis.GIS (the portal) to clone the item to.
         folder - The folder to create the item in
-        group_mapping - Dictionary containing the id of the original group and the id of the new group
+        item_mapping - Dictionary containing mapping between new and old items.
         """
     
         try:
@@ -1460,7 +1460,7 @@ class TextItemDefinition(ItemDefinition):
                 new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
-            self._share_new_item(new_item, group_mapping)
+            self._share_new_item(new_item, item_mapping['group'])
 
             return new_item
         except Exception as e:
@@ -1480,6 +1480,46 @@ class TextItemDefinition(ItemDefinition):
             file.write(json.dumps(self._data))
 
         return item_directory
+
+class FeatureCollectionDefinition(TextItemDefinition):
+    
+    def clone(self, target, folder, extent, item_mapping, copy_data):  
+        """Clone the item in the target organization.
+        Keyword arguments:
+        target - The instance of arcgis.gis.GIS (the portal) to clone the item to.
+        folder - The folder to create the item in
+        item_mapping - Dictionary containing mapping between new and old items.
+        """
+    
+        try:
+            new_item = None
+            original_item = self.info
+        
+            # Get the item properties from the original item to be applied when the new item is created
+            item_properties = self._get_item_properties()
+            if extent:
+                item_properties['extent'] = extent['itemExtent']
+            data = self.data
+            if data:
+                if not copy_data:
+                    if 'layers' in data and data['layers'] is not None:
+                        for layer in data['layers']:
+                            if 'featureSet' in layer and layer['featureSet'] is not None:
+                                layer['featureSet']['features'] = []
+                item_properties['text'] = json.dumps(data)
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                thumbnail = self.thumbnail
+                if not thumbnail and self.portal_item:
+                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
+
+            # Share the item
+            self._share_new_item(new_item, item_mapping['group'])
+
+            return new_item
+        except Exception as e:
+            raise ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(e)), new_item)
 
 class FeatureServiceDefinition(TextItemDefinition):
     """
@@ -1620,13 +1660,13 @@ class FeatureServiceDefinition(TextItemDefinition):
             for features_chunk in [layer_features[i:i+chunk_size] for i in range(0, len(layer_features), chunk_size)]:
                 layers[id].edit_features(adds=features_chunk)
 
-    def clone(self, target, folder, extent, group_mapping={}, copy_data=False):
+    def clone(self, target, folder, extent, item_mapping, copy_data):
         """Clone the feature service in the target organization.
         Keyword arguments:
         target - The instance of arcgis.gis.GIS (the portal) to clone the feature service to.
         folder - The folder to create the service in
         extent - Default extent of the new feature service
-        group_mapping - Dictionary containing the id of the original group and the id of the new group   
+        item_mapping - Dictionary containing mapping between new and old items.
         """
 
         try:
@@ -1793,7 +1833,7 @@ class FeatureServiceDefinition(TextItemDefinition):
                 self._add_features(target, new_layers, relationships, layer_field_mapping, extent['serviceExtent']['spatialReference']['wkid'])
 
             # Share the item
-            self._share_new_item(new_item, group_mapping)
+            self._share_new_item(new_item, item_mapping['group'])
 
             return (new_item, layer_field_mapping)
         except Exception as e:
@@ -1825,14 +1865,13 @@ class WebMapDefinition(TextItemDefinition):
     Represents the definition of a web map within ArcGIS Online or Portal.
     """
 
-    def clone(self, target, folder, extent, group_mapping={}, service_mapping={}):  
+    def clone(self, target, folder, extent, item_mapping):  
         """Clone the web map in the target organization.
         Keyword arguments:
         target - The instance of arcgis.gis.GIS (the portal) to clone the web map to
         folder - The folder to create the web map in
         extent - Default extent of the new web map
-        group_mapping - Dictionary containing the id of the original group and the id of the new group
-        service_mapping - Dictionary containing the mapping between the original service url and new service item id and url       
+        item_mapping - Dictionary containing mapping between new and old items.     
         """
     
         try:
@@ -1847,22 +1886,27 @@ class WebMapDefinition(TextItemDefinition):
             webmap_json = self.data
 
             layers = []
+            feature_collections = []
             if 'operationalLayers' in webmap_json:
                 layers += [layer for layer in webmap_json['operationalLayers'] if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer" and 'url' in layer]
+                feature_collections += [layer for layer in webmap_json['operationalLayers'] if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer" and 'type' in layer and layer['type'] == "Feature Collection"]
             if 'tables' in webmap_json:
                 layers += [table for table in webmap_json['tables'] if 'url' in table]
 
             for layer in layers:
                 feature_service_url = os.path.dirname(layer['url'])
-                for original_url in service_mapping:
+                for original_url in item_mapping['feature_service']:
                     if feature_service_url.lower() == original_url.lower():
-                        new_service =  service_mapping[original_url]
+                        new_service =  item_mapping['feature_service'][original_url]
                         layer_id = os.path.basename(layer['url'])
                         layer['url'] = "{0}/{1}".format(new_service['url'], layer_id)
                         layer['itemId'] = new_service['id']
                         if int(layer_id) in new_service['layer_field_mapping']:
                             self._update_layer_fields(layer, new_service['layer_field_mapping'][int(layer_id)])
                         break
+            for fc in feature_collections:
+                if 'itemId' in fc and fc['itemId'] is not None and fc['itemId'] in item_mapping['feature_collection']:
+                    fc['itemId'] = item_mapping['feature_collection'][fc['itemId']]
 
             # Change the basemap to the default basemap defined in the target organization
             properties = target.properties
@@ -1886,7 +1930,7 @@ class WebMapDefinition(TextItemDefinition):
                 new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=folder['title'])
 
             # Share the item
-            self._share_new_item(new_item, group_mapping)
+            self._share_new_item(new_item, item_mapping['group'])
 
             return new_item
         except Exception as e:
@@ -1897,14 +1941,12 @@ class ApplicationDefinition(TextItemDefinition):
     Represents the definition of an application within ArcGIS Online or Portal.
     """
     
-    def clone(self, target, folder, group_mapping={}, service_mapping={}, webmap_mapping={}):
-        """Clone the application in the target orgnaization.
+    def clone(self, target, folder, item_mapping):
+        """Clone the application in the target organization.
         Keyword arguments:
         target - The instance of arcgis.gis.GIS (the portal) to clone the web map to
         folder - The folder to create the application in
-        group_mapping - Dictionary containing the id of the original group and the id of the new group
-        service_mapping - Dictionary containing the mapping between the original service url and new service item id and url
-        webmap_mapping - Dictionary containing a mapping between the original web map id and new web map id
+        item_mapping - Dictionary containing mapping between new and old items.     
         """  
     
         try:
@@ -1924,7 +1966,7 @@ class ApplicationDefinition(TextItemDefinition):
                     if 'portalUrl' in app_json['map']:
                         app_json['map']['portalUrl'] = portal_url
                     if 'itemId' in app_json['map']:
-                        app_json['map']['itemId'] = webmap_mapping[app_json['map']['itemId']]
+                        app_json['map']['itemId'] = item_mapping['webmap'][app_json['map']['itemId']]
                 if 'httpProxy' in app_json:
                     if 'url' in app_json['httpProxy']:
                         app_json['httpProxy']['url'] = portal_url + "sharing/proxy"
@@ -1932,15 +1974,15 @@ class ApplicationDefinition(TextItemDefinition):
                     app_json['geometryService'] = target.properties['helperServices']['geometry']['url']
 
                 app_json_text = json.dumps(app_json)        
-                for service in service_mapping:
-                    app_json_text = re.sub(service, service_mapping[service]['url'], app_json_text, 0, re.IGNORECASE)
+                for service in item_mapping['feature_service']:
+                    app_json_text = re.sub(service, item_mapping['feature_service'][service]['url'], app_json_text, 0, re.IGNORECASE)
                 item_properties['text'] = app_json_text
 
             elif original_item['type'] == "Operation View": #Operations Dashboard
                 if 'widgets' in app_json:
                     for widget in app_json['widgets']:
                         if 'mapId' in widget:
-                            widget['mapId'] = webmap_mapping[widget['mapId']]
+                            widget['mapId'] = item_mapping['webmap'][widget['mapId']]
                 item_properties['text'] = json.dumps(app_json)
 
             else: #Configurable Application Template
@@ -1948,15 +1990,15 @@ class ApplicationDefinition(TextItemDefinition):
                     app_json['folderId'] = folder['id']
                 if 'values' in app_json:
                     if 'group' in app_json['values']:
-                        app_json['values']['group'] = group_mapping[app_json['values']['group']]
+                        app_json['values']['group'] = item_mapping['group'][app_json['values']['group']]
                     if 'webmap' in app_json['values']:
-                        app_json['values']['webmap'] = webmap_mapping[app_json['values']['webmap']]
+                        app_json['values']['webmap'] = item_mapping['webmap'][app_json['values']['webmap']]
                 item_properties['text'] = json.dumps(app_json)
 
             # Perform a general find and replace of field names if field mapping is required
-            for service in service_mapping:
-                for layer_id in service_mapping[service]['layer_field_mapping']:
-                    field_mapping = service_mapping[service]['layer_field_mapping'][layer_id]
+            for service in item_mapping['feature_service']:
+                for layer_id in item_mapping['feature_service'][service]['layer_field_mapping']:
+                    field_mapping = item_mapping['feature_service'][service]['layer_field_mapping'][layer_id]
                     item_properties['text'] = self._find_and_replace_fields(item_properties['text'], field_mapping)
 
             # Add the application to the target portal
@@ -1978,7 +2020,7 @@ class ApplicationDefinition(TextItemDefinition):
                 new_item.update(item_properties)
     
             # Share the item
-            self._share_new_item(new_item, group_mapping)
+            self._share_new_item(new_item, item_mapping['group'])
 
             return new_item
         except Exception as e:
@@ -2033,9 +2075,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
     spatial_reference - An arcpy.SpatialReference used to specify the output coordinate system of any cloned feature services.
     """  
 
-    group_mapping = {}   
-    service_mapping = {}
-    webmap_mapping = {}
+    item_mapping = { 'group' : {}, 'feature_service' : {}, 'feature_collection' : {}, 'webmap' : {} }
     created_items = []
 
     try:
@@ -2095,7 +2135,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
                 _add_message("Created Group {0}".format(new_group['title']))
             else:
                 _add_message("Existing Group {0} found".format(new_group['title']))
-            group_mapping[original_group['id']] = new_group['id']
+            item_mapping['group'][original_group['id']] = new_group['id']
 
         # Clone the feature services
         for feature_service in [i for i in item_definitions if isinstance(i, FeatureServiceDefinition)]:
@@ -2107,7 +2147,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             layer_field_mapping = {}
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                     
-                new_item, layer_field_mapping = feature_service.clone(target, folder, default_extent, group_mapping, copy_data)
+                new_item, layer_field_mapping = feature_service.clone(target, folder, default_extent, item_mapping, copy_data)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2121,7 +2161,23 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
                     if 'fieldMapping' in layer:
                         layer_field_mapping[layer['id']] = layer['fieldMapping']
                 _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))        
-            service_mapping[original_item['url']] = { 'id' : new_item['id'], 'url' : new_item['url'], 'layer_field_mapping' : layer_field_mapping }
+            item_mapping['feature_service'][original_item['url']] = { 'id' : new_item['id'], 'url' : new_item['url'], 'layer_field_mapping' : layer_field_mapping }
+
+        # Clone the feature collections
+        for feature_collection in [i for i in item_definitions if isinstance(i, FeatureCollectionDefinition)]:
+            if arcpy.env.isCancelled:
+                raise CustomCancelException() 
+            item_definitions.remove(feature_collection)
+            original_item = feature_collection.info
+          
+            new_item = _get_existing_item(original_item, folder_items)
+            if not new_item:
+                new_item = feature_collection.clone(target, folder, default_extent, item_mapping, copy_data)
+                created_items.append(new_item)
+                _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
+            else:
+                _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
+            item_mapping['feature_collection'][original_item['id']] =  new_item['id']
 
         # Clone the web maps
         for webmap in [i for i in item_definitions if isinstance(i, WebMapDefinition)]:
@@ -2129,19 +2185,15 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
                 raise CustomCancelException() 
             item_definitions.remove(webmap)
             original_item = webmap.info
-
-            if original_item['id'] in webmap_mapping: #We have already found or created this item
-                _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
-                continue
           
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:
-                new_item = webmap.clone(target, folder, default_extent, group_mapping, service_mapping)
+                new_item = webmap.clone(target, folder, default_extent, item_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
                 _add_message("Existing {0} {1} found in {2} folder".format(original_item['type'], original_item['title'], folder['title']))   
-            webmap_mapping[original_item['id']] =  new_item['id']
+            item_mapping['webmap'][original_item['id']] =  new_item['id']
 
         # Clone the applications
         for application in [i for i in item_definitions if isinstance(i, ApplicationDefinition)]:
@@ -2152,7 +2204,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                   
-                new_item = application.clone(target, folder, group_mapping, service_mapping, webmap_mapping)
+                new_item = application.clone(target, folder, item_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2166,7 +2218,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
 
             new_item = _get_existing_item(original_item, folder_items)
             if not new_item:                   
-                new_item = item_definition.clone(target, folder, default_extent, group_mapping)
+                new_item = item_definition.clone(target, folder, default_extent, item_mapping)
                 created_items.append(new_item)
                 _add_message("Created {0} {1}".format(new_item['type'], new_item['title']))   
             else:
@@ -2181,7 +2233,7 @@ def clone_item(target, item, folder_name, copy_data=False, extent=None, spatial_
             if e.args[1] is not None:
                 created_items.append(e.args[1])
         elif type(e) == CustomCancelException:
-            _add_message("{0} deployment canceled".format(item['title']), 'Error')
+            _add_message("{0} deployment cancelled".format(item['title']), 'Error')
         else:
             _add_message(str(e), 'Error')
 
@@ -2271,14 +2323,16 @@ def _get_item_definitions(item, item_definitions):
         item_definitions.append(item_definition)
         
         webmap_json = item_definition.data
-        layers = []
+        feature_services = []
+        feature_collections = []
 
         if 'operationalLayers' in webmap_json:
-            layers += [layer for layer in webmap_json['operationalLayers'] if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer" and 'url' in layer]
+            feature_services += [layer for layer in webmap_json['operationalLayers'] if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer" and 'url' in layer]
+            feature_collections += [layer for layer in webmap_json['operationalLayers'] if 'layerType' in layer and layer['layerType'] == "ArcGISFeatureLayer" and 'type' in layer and layer['type'] == "Feature Collection"]
         if 'tables' in webmap_json:
-            layers += [table for table in webmap_json['tables'] if 'url' in table]
+            feature_services += [table for table in webmap_json['tables'] if 'url' in table]
 
-        for layer in layers:
+        for layer in feature_services:
             feature_service_url = os.path.dirname(layer['url'])
             feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == feature_service_url), None)
             if not feature_service:
@@ -2298,6 +2352,11 @@ def _get_item_definitions(item, item_definitions):
                     _add_message("Failed to get service item {0}".format(item_id, 'Error'))
                     raise
                 _get_item_definitions(feature_service, item_definitions)
+
+        for fc in feature_collections:
+            if 'itemId' in fc and fc['itemId'] is not None:
+                feature_collection = source.content.get(fc['itemId'])
+                _get_item_definitions(feature_collection, item_definitions)
 
     # All other types we no longer need to recursively look for related items
     else:
@@ -2457,6 +2516,10 @@ def _get_item_defintion(item):
         data = item.get_data()
 
         return FeatureServiceDefinition(dict(item), service_definition, layers_definition, features=None, data=data, thumbnail=None, portal_item=item)
+
+    # If the item is a feature collection get the FeatureCollectionDefintion
+    elif item['type'] == 'Feature Collection':
+        return FeatureCollectionDefinition(dict(item), data=item.get_data(), thumbnail=None, portal_item=item)
 
     # For all other types get the corresponding definition
     else:
