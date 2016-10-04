@@ -2,15 +2,12 @@
 1. [Download](https://github.com/chris-fox/scripts-tools/archive/master.zip) or Clone this repo
 2. Install ArcGIS Pro 1.3
 3. Find the application shortcut “Python Command Prompt” that is now available under the ArcGIS program group. Run it as an administrator.
-4. Run the following command. This information is documented as well in the [python api install and setup guide](https://developers.arcgis.com/python/guide/Install-and-set-up/)
+4. Run the following command.
    
     ```
-    conda install -c esri arcgis=0.1
+    conda install arcgis
     ```
-5. Go to https://github.com/ArcGIS/geosaurus and [download](https://github.com/ArcGIS/geosaurus/archive/master.zip) or clone the repo
-6. Copy the contents of /src/arcgis and overwrite the contents of the arcgis package in your Pro 1.3 install location. By default this location would be C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\lib\site-packages\arcgis
-    - Note: Users will not have to do step 5 and 6 when we release, we are just doing this because the beta version has bugs that have since been fixed so we want to use latest code.
-7. In ArcGIS Pro browse to the Deploy Solutions.pyt you downloaded from this repo and start using the tools
+5. In ArcGIS Pro browse to the Deploy Solutions.pyt you downloaded from this repo and start using the tools
 
 #Using the tools#
 ##Clone Items##
